@@ -2119,6 +2119,52 @@
                     </div>
                 </div>
             </div>
+
+            <!-- ==================== PAINEL: MOTOR DE IA / APRENDIZADO ==================== -->
+            <div class="max-w-2xl premium-card p-6 space-y-5">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h4 class="font-bold text-gray-800 dark:text-gray-100 text-sm flex items-center gap-2">
+                            <i class="fa-solid fa-brain text-red-500"></i>
+                            Motor de IA — Aprendizado de Máquina
+                        </h4>
+                        <p class="text-xs text-gray-400 mt-1">A cada peça escaneada e confirmada/corrigida, o modelo grava um novo exemplo no banco e melhora sozinho. Sem correções ainda, é normal errar mais — quanto mais você usa, mais preciso fica.</p>
+                    </div>
+                    <button onclick="loadAiLearningStats()" id="btn-refresh-ai-stats" class="shrink-0 w-9 h-9 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 flex items-center justify-center text-gray-500 dark:text-gray-300" title="Atualizar estatísticas">
+                        <i class="fa-solid fa-rotate"></i>
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3" id="ai-stats-grid">
+                    <!-- Cor -->
+                    <div class="p-4 bg-gray-50 dark:bg-slate-800/60 border border-gray-100 dark:border-slate-800 rounded-2xl space-y-1.5">
+                        <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Classificador de Cor</p>
+                        <h5 class="text-xl font-black text-gray-800 dark:text-gray-100" id="ai-color-accuracy">—</h5>
+                        <p class="text-[10px] text-gray-400" id="ai-color-training-size">Carregando…</p>
+                        <div class="w-full h-1.5 bg-gray-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                            <div id="ai-color-accuracy-bar" class="h-full bg-gradient-to-r from-red-500 to-emerald-500" style="width:0%"></div>
+                        </div>
+                    </div>
+                    <!-- Categoria -->
+                    <div class="p-4 bg-gray-50 dark:bg-slate-800/60 border border-gray-100 dark:border-slate-800 rounded-2xl space-y-1.5">
+                        <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Classificador de Categoria</p>
+                        <h5 class="text-xl font-black text-gray-800 dark:text-gray-100" id="ai-category-accuracy">—</h5>
+                        <p class="text-[10px] text-gray-400" id="ai-category-training-size">Carregando…</p>
+                        <div class="w-full h-1.5 bg-gray-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                            <div id="ai-category-accuracy-bar" class="h-full bg-gradient-to-r from-red-500 to-emerald-500" style="width:0%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <h5 class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Últimas correções aprendidas</h5>
+                    <div class="space-y-1.5 max-h-48 overflow-y-auto pr-1" id="ai-recent-corrections">
+                        <p class="text-xs text-gray-400 py-2 text-center">Nenhum dado ainda. Escaneie uma peça na aba Câmera para começar a treinar a IA.</p>
+                    </div>
+                </div>
+
+                <p class="text-[10px] text-gray-400 border-t border-gray-100 dark:border-slate-800 pt-3" id="ai-offline-note"></p>
+            </div>
         </section>
 
     </main>
@@ -2206,6 +2252,20 @@
                         <input type="text" id="modal-item-material" placeholder="Ex: Algodão, Jeans" class="w-full px-4 py-3 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20">
                     </div>
                 </div>
+
+                <!-- Painel de confiança da IA: aparece quando o scanner tem baixa
+                     certeza sobre a cor/categoria e sugere alternativas para o
+                     usuário decidir. Cada escolha aqui vira aprendizado no backend. -->
+                <div id="modal-ai-confidence" class="hidden space-y-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl">
+                    <div class="flex items-start gap-2">
+                        <i class="fa-solid fa-robot text-amber-500 mt-0.5"></i>
+                        <div class="flex-1 space-y-2">
+                            <p class="text-xs font-bold text-amber-600 dark:text-amber-400" id="modal-ai-confidence-title">A IA não tem certeza desta peça. Confirme ou escolha outra opção:</p>
+                            <div id="modal-ai-color-alternatives" class="hidden flex flex-wrap gap-1.5"></div>
+                            <div id="modal-ai-category-alternatives" class="hidden flex flex-wrap gap-1.5"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Footer -->
@@ -2231,6 +2291,17 @@
         const STORAGE_PROFILE_KEY = 'clostyle_profile_v2';
         const STORAGE_SETTINGS_KEY = 'clostyle_settings_v2';
         const STORAGE_HISTORY_KEY = 'clostyle_history_v2';
+        const STORAGE_PENDING_FEEDBACK_KEY = 'clostyle_pending_ml_feedback_v1';
+
+        // ==================== IA / BANCO DE DADOS EM NUVEM ====================
+        // API do motor de Machine Learning (Netlify Functions + Postgres). O app
+        // continua 100% funcional offline (localStorage) caso a API não responda —
+        // as chamadas abaixo sempre têm fallback local.
+        const API_BASE = '/api';
+        // Guarda o resultado do último escaneamento por IA (previsão + features
+        // enviadas), para comparar com o que o usuário efetivamente salvar e
+        // assim alimentar o aprendizado (POST /api/scan/feedback) no momento do save.
+        let lastScanPrediction = null;
 
         // Memory states
         let wardrobe = [];
@@ -2418,7 +2489,8 @@
             renderProfileDetails();
             renderStyleHistory();
             analyzePalette(activeSelectedHexColor);
-            
+            flushPendingFeedback();
+
             // Check for notifications
             if (appSettings.notifications) {
                 setTimeout(() => {
@@ -2539,6 +2611,8 @@
                 renderStyleHistory();
             } else if (tabId === 'camera') {
                 handleCameraTabEntrance();
+            } else if (tabId === 'settings') {
+                loadAiLearningStats();
             }
             
             // Scroll main viewport to top on nav click
@@ -2974,7 +3048,8 @@
         function openManualModal() {
             currentlyEditingItemId = null;
             modalImageBase64 = null;
-            
+            lastScanPrediction = null; // adição manual (sem foto/IA) não gera aprendizado
+
             // Clean inputs
             document.getElementById('item-modal-title').textContent = 'Adicionar Peça';
             document.getElementById('modal-item-name').value = '';
@@ -2984,7 +3059,12 @@
             document.getElementById('modal-item-color-secondary').value = '';
             document.getElementById('modal-item-size').value = '';
             document.getElementById('modal-item-material').value = '';
-            
+
+            // Esconde o painel de confiança da IA (só aparece após um scan real)
+            document.getElementById('modal-ai-confidence').classList.add('hidden');
+            document.getElementById('modal-ai-color-alternatives').innerHTML = '';
+            document.getElementById('modal-ai-category-alternatives').innerHTML = '';
+
             // Restore Preview frame placeholder
             const preview = document.getElementById('modal-photo-preview');
             preview.innerHTML = `<i class="fa-solid fa-shirt text-3xl text-gray-300"></i>`;
@@ -3004,6 +3084,8 @@
 
             currentlyEditingItemId = itemId;
             modalImageBase64 = item.photo;
+            lastScanPrediction = null; // editar peça já cadastrada não é um scan novo
+            document.getElementById('modal-ai-confidence').classList.add('hidden');
 
             // Fill inputs
             document.getElementById('item-modal-title').textContent = 'Editar Peça';
@@ -3075,6 +3157,8 @@
                 return;
             }
 
+            let savedItem = null;
+
             if (currentlyEditingItemId) {
                 // Editing
                 const idx = wardrobe.findIndex(i => i.id === currentlyEditingItemId);
@@ -3087,6 +3171,7 @@
                     wardrobe[idx].size = size;
                     wardrobe[idx].material = material;
                     wardrobe[idx].photo = modalImageBase64;
+                    savedItem = wardrobe[idx];
                     showToast('✅ Dados da peça atualizados com sucesso.', 'success');
                 }
             } else {
@@ -3105,6 +3190,7 @@
                     photo: modalImageBase64
                 };
                 wardrobe.push(newItem);
+                savedItem = newItem;
                 showToast('✨ Peça adicionada com sucesso ao guarda-roupa.', 'success');
             }
 
@@ -3112,6 +3198,178 @@
             renderWardrobeList();
             renderDashboard();
             closeItemModal();
+
+            // Backup/sincronização em banco de dados real (best-effort, não trava a UI).
+            if (savedItem) {
+                syncWardrobeItemToDb(savedItem);
+                // Se esta peça veio de um scan de câmera, este é o momento em que a
+                // IA aprende: compara o que ela previu com o que o usuário
+                // efetivamente confirmou/corrigiu nos campos do formulário.
+                submitScanFeedbackIfNeeded(savedItem.id, primaryColor, category);
+            }
+        }
+
+        // ==================== IA: SINCRONIZAÇÃO EM NUVEM E APRENDIZADO ====================
+
+        /** Cópia de segurança do item no banco de dados (Postgres via Netlify DB).
+         * O app já salvou em localStorage antes de chamar isso — falha de rede
+         * aqui nunca impede o uso do app, só adia o backup em nuvem. */
+        async function syncWardrobeItemToDb(item) {
+            try {
+                await fetch(`${API_BASE}/wardrobe`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(item)
+                });
+            } catch (err) {
+                console.warn('Não foi possível sincronizar a peça com o banco de dados em nuvem agora.', err);
+            }
+        }
+
+        /** O coração do "aprender sozinho": compara a predição da IA com o que o
+         * usuário realmente salvou e envia para /api/scan/feedback, que grava um
+         * novo exemplo de treinamento (peso maior que a base semente). */
+        async function submitScanFeedbackIfNeeded(itemId, finalColor, finalCategory) {
+            const pred = lastScanPrediction;
+            lastScanPrediction = null; // a previsão só vale para este save
+
+            if (!pred || pred.offline) return; // nada consultado em nuvem -> nada pra reforçar/corrigir
+
+            const payload = {
+                rgb: pred.rgb,
+                categoryFeatures: pred.categoryFeatures,
+                predictedColor: pred.color ? pred.color.predicted : null,
+                finalColor,
+                colorConfidence: pred.color ? pred.color.confidence : null,
+                colorNeededReview: pred.color ? pred.color.needsReview : false,
+                predictedCategory: pred.category ? pred.category.predicted : null,
+                finalCategory,
+                categoryConfidence: pred.category ? pred.category.confidence : null,
+                categoryNeededReview: pred.category ? pred.category.needsReview : false,
+                itemId
+            };
+
+            try {
+                const res = await fetch(`${API_BASE}/scan/feedback`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                if (data.colorWasCorrection || data.categoryWasCorrection) {
+                    showToast(`🧠 ${data.message}`, 'success', 5000);
+                }
+            } catch (err) {
+                console.warn('Falha ao enviar feedback de aprendizado — guardado para reenviar depois.', err);
+                queuePendingFeedback(payload);
+            }
+        }
+
+        /** Fila simples em localStorage para não perder correções feitas offline
+         * — reenviada automaticamente na próxima abertura do app com rede OK. */
+        function queuePendingFeedback(payload) {
+            try {
+                const queue = JSON.parse(localStorage.getItem(STORAGE_PENDING_FEEDBACK_KEY) || '[]');
+                queue.push(payload);
+                localStorage.setItem(STORAGE_PENDING_FEEDBACK_KEY, JSON.stringify(queue.slice(-50)));
+            } catch (err) {
+                console.warn('Não foi possível enfileirar o feedback pendente.', err);
+            }
+        }
+
+        async function flushPendingFeedback() {
+            let queue;
+            try {
+                queue = JSON.parse(localStorage.getItem(STORAGE_PENDING_FEEDBACK_KEY) || '[]');
+            } catch {
+                queue = [];
+            }
+            if (!queue.length) return;
+
+            const remaining = [];
+            for (const payload of queue) {
+                try {
+                    const res = await fetch(`${API_BASE}/scan/feedback`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                } catch {
+                    remaining.push(payload); // ainda offline, tenta de novo mais tarde
+                }
+            }
+            localStorage.setItem(STORAGE_PENDING_FEEDBACK_KEY, JSON.stringify(remaining));
+            if (remaining.length < queue.length) {
+                console.info(`✅ ${queue.length - remaining.length} correção(ões) pendente(s) sincronizada(s) com a IA.`);
+            }
+        }
+
+        /** Alimenta o painel "Motor de IA" em Configurações. */
+        async function loadAiLearningStats() {
+            await flushPendingFeedback();
+
+            const offlineNote = document.getElementById('ai-offline-note');
+            try {
+                const res = await fetch(`${API_BASE}/ml/stats`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const stats = await res.json();
+
+                renderAiStatCard('color', stats.color);
+                renderAiStatCard('category', stats.category);
+                renderAiRecentCorrections(stats.recentEvents || []);
+                offlineNote.textContent = '';
+            } catch (err) {
+                console.warn('Não foi possível carregar as estatísticas de IA (banco de dados indisponível).', err);
+                document.getElementById('ai-color-accuracy').textContent = '—';
+                document.getElementById('ai-color-training-size').textContent = 'Sem conexão com o banco de dados.';
+                document.getElementById('ai-category-accuracy').textContent = '—';
+                document.getElementById('ai-category-training-size').textContent = 'Sem conexão com o banco de dados.';
+                offlineNote.textContent = '📡 Não foi possível conectar ao banco de dados de IA agora. Suas peças continuam salvas localmente e as correções serão sincronizadas quando a conexão voltar.';
+            }
+        }
+
+        function renderAiStatCard(kind, data) {
+            const accuracyEl = document.getElementById(`ai-${kind}-accuracy`);
+            const sizeEl = document.getElementById(`ai-${kind}-training-size`);
+            const barEl = document.getElementById(`ai-${kind}-accuracy-bar`);
+            if (!data) return;
+
+            if (data.estimatedAccuracy === null || data.estimatedAccuracy === undefined) {
+                accuracyEl.textContent = 'Aprendendo…';
+                barEl.style.width = '8%';
+            } else {
+                const pct = Math.round(data.estimatedAccuracy * 100);
+                accuracyEl.textContent = `${pct}%`;
+                barEl.style.width = `${Math.max(4, pct)}%`;
+            }
+            sizeEl.textContent = `${data.trainingSetSize} exemplos na base (${data.fromUserCorrections} vindos de correções suas)`;
+        }
+
+        function renderAiRecentCorrections(events) {
+            const container = document.getElementById('ai-recent-corrections');
+            const corrections = events.filter(e => (e.corrected_color && e.corrected_color !== e.predicted_color) || (e.corrected_category && e.corrected_category !== e.predicted_category));
+
+            if (corrections.length === 0) {
+                container.innerHTML = `<p class="text-xs text-gray-400 py-2 text-center">Nenhuma correção registrada ainda — a IA está usando só a base semente.</p>`;
+                return;
+            }
+
+            container.innerHTML = corrections.map(e => {
+                const parts = [];
+                if (e.corrected_color && e.corrected_color !== e.predicted_color) {
+                    parts.push(`Cor: <span class="line-through text-gray-400">${e.predicted_color || '—'}</span> → <span class="font-bold text-emerald-500">${e.corrected_color}</span>`);
+                }
+                if (e.corrected_category && e.corrected_category !== e.predicted_category) {
+                    parts.push(`Categoria: <span class="line-through text-gray-400">${categoryLabelPt(e.predicted_category || '—')}</span> → <span class="font-bold text-emerald-500">${categoryLabelPt(e.corrected_category)}</span>`);
+                }
+                const when = e.created_at ? new Date(e.created_at).toLocaleString('pt-BR') : '';
+                return `<div class="p-2.5 bg-gray-50 dark:bg-slate-800/60 border border-gray-100 dark:border-slate-800 rounded-xl text-[11px] text-gray-600 dark:text-gray-300">
+                    ${parts.join(' · ')}
+                    <p class="text-[9px] text-gray-400 mt-1">${when}</p>
+                </div>`;
+            }).join('');
         }
 
         // ==================== IA CAMERA VISION COMPUTER SCANNER ====================
@@ -3482,6 +3740,9 @@
         // Capture Snapshot from stream
         let capturedBlobBase64 = null;
         let detectedColorForSnapshot = 'Cinza';
+        // Promise da classificação por IA em nuvem disparada na captura, aguardada
+        // no confirmCameraPhoto() para não travar a UI no clique do obturador.
+        let scanAnalysisPromise = null;
 
         function captureCameraPhoto() {
             const video = document.getElementById('camera-feed');
@@ -3521,23 +3782,24 @@
             const compCtx = compCanvas.getContext('2d');
             compCtx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
 
-            // Get center pixel color from original high-res canvas
-            const cx = Math.floor(canvas.width / 2);
-            const cy = Math.floor(canvas.height / 2);
-            const pixelData = ctx.getImageData(cx - 5, cy - 5, 10, 10);
-            
-            let r = 0, g = 0, b = 0, count = 0;
-            for (let i = 0; i < pixelData.data.length; i += 4) {
-                r += pixelData.data[i];
-                g += pixelData.data[i+1];
-                b += pixelData.data[i+2];
-                count++;
-            }
-            r = Math.round(r/count);
-            g = Math.round(g/count);
-            b = Math.round(b/count);
+            // ===== Extração de características para a IA (não é mais 1 pixel!) =====
+            // Amostra uma grade sobre a área central do enquadramento (onde o app
+            // instrui o usuário a posicionar a peça), calcula a cor dominante real
+            // (não a média simples) e sinais extras (saturação, brilho, densidade
+            // de bordas) usados também para sugerir a categoria da peça.
+            const features = extractGarmentFeatures(ctx, canvas.width, canvas.height);
+            const rgb = { r: features.r, g: features.g, b: features.b };
+            const categoryFeatures = {
+                aspectRatio: round3(canvas.width / canvas.height),
+                avgSaturation: round3(features.avgSaturation),
+                avgBrightness: round3(features.avgBrightness),
+                edgeDensity: round3(features.edgeDensity)
+            };
 
-            detectedColorForSnapshot = findClosestColorName(r, g, b);
+            // Estimativa local instantânea — usada para a pré-visualização e como
+            // fallback caso a IA em nuvem não responda a tempo (modo offline).
+            detectedColorForSnapshot = findClosestColorName(rgb.r, rgb.g, rgb.b);
+            lastScanPrediction = { rgb, categoryFeatures, color: null, category: null, offline: true };
 
             // Export compressed JPEG base64 (quality 0.65)
             capturedBlobBase64 = compCanvas.toDataURL('image/jpeg', 0.65);
@@ -3550,11 +3812,15 @@
             document.getElementById('camera-preview-container').classList.remove('hidden');
             document.getElementById('camera-feed').classList.add('hidden');
             document.getElementById('camera-hud-overlay').classList.add('hidden');
-            
+
             document.getElementById('camera-viewfinder-controls').classList.add('hidden');
             document.getElementById('camera-preview-controls').classList.remove('hidden');
 
             showToast("📸 Foto capturada! Verifique a pré-visualização.", "info");
+
+            // Dispara a classificação pelo motor de IA (banco de dados + k-NN que
+            // aprende com correções) em paralelo, sem travar a interface.
+            scanAnalysisPromise = analyzeGarmentScan(rgb, categoryFeatures);
         }
 
         function retakeCameraPhoto() {
@@ -3562,18 +3828,46 @@
             document.getElementById('camera-preview-container').classList.add('hidden');
             document.getElementById('camera-feed').classList.remove('hidden');
             document.getElementById('camera-hud-overlay').classList.remove('hidden');
-            
+
             document.getElementById('camera-viewfinder-controls').classList.remove('hidden');
             document.getElementById('camera-preview-controls').classList.add('hidden');
-            
+
             capturedBlobBase64 = null;
+            scanAnalysisPromise = null;
+            lastScanPrediction = null;
         }
 
-        function confirmCameraPhoto() {
+        async function confirmCameraPhoto() {
             if (!capturedBlobBase64) return;
 
             // Stop camera track
             stopLiveCamera();
+
+            // Aguarda a IA em nuvem (banco de dados + k-NN) terminar de classificar
+            // a peça, com um teto curto de espera para não travar o usuário caso a
+            // rede esteja lenta/indisponível — nesse caso cai para a estimativa local.
+            if (scanAnalysisPromise) {
+                const loader = document.getElementById('camera-loader');
+                const loaderStatus = document.getElementById('camera-loader-status');
+                loader.classList.remove('hidden');
+                loaderStatus.textContent = 'Consultando a IA treinada (cor e categoria)...';
+
+                const mlResult = await scanAnalysisPromise.catch(() => null);
+                scanAnalysisPromise = null;
+                loader.classList.add('hidden');
+
+                if (mlResult && mlResult.color) {
+                    detectedColorForSnapshot = mlResult.color.predicted;
+                    lastScanPrediction = {
+                        ...lastScanPrediction,
+                        color: mlResult.color,
+                        category: mlResult.category,
+                        offline: false
+                    };
+                } else {
+                    showToast('📡 IA em nuvem indisponível no momento — usando estimativa local de cor. Você pode corrigir manualmente.', 'warning', 5000);
+                }
+            }
 
             // Open confirmation catalog modal prefilled
             openAutoConfirmedCatalogModal(detectedColorForSnapshot, capturedBlobBase64);
@@ -3590,20 +3884,23 @@
         function simulateAiCatalog() {
             const loader = document.getElementById('camera-loader');
             const loaderStatus = document.getElementById('camera-loader-status');
-            
+
             loader.classList.remove('hidden');
             loaderStatus.textContent = "Simulando Upload & Escaneamento...";
 
             setTimeout(() => {
                 loaderStatus.textContent = "Catalogando peça detectada...";
-                
+
                 setTimeout(() => {
                     loader.classList.add('hidden');
                     stopLiveCamera();
-                    
+
                     const mock = simulatedMockList[Math.floor(Math.random() * simulatedMockList.length)];
                     modalImageBase64 = ''; // uses colored vector default
 
+                    // Simulação não veio de uma foto real -> não deve virar exemplo
+                    // de treinamento (não sabemos a cor/categoria de verdade).
+                    lastScanPrediction = null;
                     openAutoConfirmedCatalogModal(mock.primaryColor, null, mock);
                 }, 1200);
             }, 1000);
@@ -3611,14 +3908,18 @@
 
         // Prepopulate item modal based on computer vision scan
         function openAutoConfirmedCatalogModal(detectedColorName, imageBase64Data = null, mockObject = null) {
+            const scanPrediction = mockObject ? null : lastScanPrediction; // captura antes do reset feito por openManualModal()
             openManualModal();
-            
-            // Rewrite values with simulated AI predictions
-            const predictedBrand = mockObject ? mockObject.brand : 'Nike';
-            const predictedCategory = mockObject ? mockObject.category : 'camisetas';
-            const predictedName = mockObject ? mockObject.name : `Camiseta ${detectedColorName} Especial`;
-            const predictedMaterial = mockObject ? mockObject.material : 'Algodão Algomerado';
-            
+            lastScanPrediction = scanPrediction;
+
+            // Categoria: usa a predição real da IA quando disponível, senão a do
+            // mock de simulação, senão o padrão "camisetas".
+            const mlCategory = scanPrediction && scanPrediction.category ? scanPrediction.category.predicted : null;
+            const predictedBrand = mockObject ? mockObject.brand : '';
+            const predictedCategory = mockObject ? mockObject.category : (mlCategory || 'camisetas');
+            const predictedName = mockObject ? mockObject.name : `${categoryLabelPt(predictedCategory)} ${detectedColorName}`;
+            const predictedMaterial = mockObject ? mockObject.material : '';
+
             document.getElementById('modal-item-name').value = predictedName;
             document.getElementById('modal-item-category').value = predictedCategory;
             document.getElementById('modal-item-brand').value = predictedBrand;
@@ -3628,7 +3929,7 @@
             document.getElementById('modal-item-material').value = predictedMaterial;
 
             modalImageBase64 = imageBase64Data;
-            
+
             const preview = document.getElementById('modal-photo-preview');
             if (imageBase64Data) {
                 preview.innerHTML = `<img src="${imageBase64Data}" class="w-full h-full object-cover">`;
@@ -3637,7 +3938,187 @@
                 preview.innerHTML = `<img src="${vector}" class="w-full h-full object-cover">`;
             }
 
-            showToast(`🤖 Inteligência Artificial: Autodetectou "${predictedName}"! Confirme os dados antes de salvar.`, 'success', 6000);
+            renderAiConfidencePanel();
+
+            const confPct = scanPrediction && scanPrediction.color ? Math.round(scanPrediction.color.confidence * 100) : null;
+            const confSuffix = confPct !== null ? ` (confiança ${confPct}%)` : '';
+            showToast(`🤖 IA: Autodetectou "${predictedName}"${confSuffix}! Confirme os dados antes de salvar.`, 'success', 6000);
+        }
+
+        // ==================== IA DE ESCANEAMENTO: extração de features + API ====================
+
+        // Mapa técnico -> rótulo em português (mesmas categorias do <select>).
+        const CATEGORY_LABELS_PT = {
+            camisetas: 'Camiseta', camisas: 'Camisa', moletons: 'Moletom', calcas: 'Calça',
+            shorts: 'Shorts', saias: 'Saia', vestidos: 'Vestido', ternos: 'Terno',
+            sapatos: 'Sapato', tenis: 'Tênis', bones: 'Boné', jaquetas: 'Jaqueta', acessorios: 'Acessório'
+        };
+        function categoryLabelPt(value) {
+            return CATEGORY_LABELS_PT[value] || value;
+        }
+
+        function round3(n) { return Math.round(n * 1000) / 1000; }
+
+        // RGB -> HSL (mesma fórmula usada no backend, para o brilho/saturação
+        // médios ficarem na mesma escala usada pelo classificador de categoria).
+        function rgbToHslClient(r, g, b) {
+            r /= 255; g /= 255; b /= 255;
+            const max = Math.max(r, g, b), min = Math.min(r, g, b);
+            const l = (max + min) / 2;
+            let h = 0, s = 0;
+            const d = max - min;
+            if (d !== 0) {
+                s = d / (1 - Math.abs(2 * l - 1));
+                switch (max) {
+                    case r: h = 60 * (((g - b) / d) % 6); break;
+                    case g: h = 60 * ((b - r) / d + 2); break;
+                    case b: h = 60 * ((r - g) / d + 4); break;
+                }
+            }
+            if (h < 0) h += 360;
+            return { h, s, l };
+        }
+
+        /**
+         * Extrai da foto: (1) a cor dominante real da região central via um
+         * histograma de baldes de cor (bem mais robusto que a média de 1 pixel
+         * usada antes — a média simples "borra" cores diferentes e é sensível a
+         * um único reflexo/sombra); (2) saturação e brilho médios; (3) uma
+         * densidade de bordas (proxy de textura/estampa) usada para sugerir a
+         * categoria da peça.
+         */
+        function extractGarmentFeatures(ctx, width, height) {
+            const marginX = Math.floor(width * 0.15);
+            const marginY = Math.floor(height * 0.15);
+            const regionW = Math.max(2, width - marginX * 2);
+            const regionH = Math.max(2, height - marginY * 2);
+            const regionData = ctx.getImageData(marginX, marginY, regionW, regionH).data;
+
+            const gridSize = 20;
+            const buckets = new Map(); // "r,g,b quantizado" -> { count, rSum, gSum, bSum }
+            let satSum = 0, lightSum = 0;
+            const grayGrid = [];
+
+            for (let gy = 0; gy < gridSize; gy++) {
+                const py = Math.min(regionH - 1, Math.floor((gy * (regionH - 1)) / (gridSize - 1)));
+                const grayRow = [];
+                for (let gx = 0; gx < gridSize; gx++) {
+                    const px = Math.min(regionW - 1, Math.floor((gx * (regionW - 1)) / (gridSize - 1)));
+                    const i = (py * regionW + px) * 4;
+                    const r = regionData[i], g = regionData[i + 1], b = regionData[i + 2];
+
+                    const qKey = `${Math.round(r / 20)},${Math.round(g / 20)},${Math.round(b / 20)}`;
+                    const bucket = buckets.get(qKey) || { count: 0, rSum: 0, gSum: 0, bSum: 0 };
+                    bucket.count++; bucket.rSum += r; bucket.gSum += g; bucket.bSum += b;
+                    buckets.set(qKey, bucket);
+
+                    const hsl = rgbToHslClient(r, g, b);
+                    satSum += hsl.s; lightSum += hsl.l;
+                    grayRow.push((r + g + b) / 3);
+                }
+                grayGrid.push(grayRow);
+            }
+
+            // Cor dominante = balde com mais amostras (média das cores reais dele,
+            // não o centro do balde, pra manter precisão).
+            let bestBucket = null;
+            for (const bucket of buckets.values()) {
+                if (!bestBucket || bucket.count > bestBucket.count) bestBucket = bucket;
+            }
+            const domR = Math.round(bestBucket.rSum / bestBucket.count);
+            const domG = Math.round(bestBucket.gSum / bestBucket.count);
+            const domB = Math.round(bestBucket.bSum / bestBucket.count);
+
+            // Densidade de bordas: diferença de luminância entre células vizinhas
+            // da grade, normalizada — mais alta em peças com estampa/textura/costuras
+            // visíveis (jaqueta, tênis), mais baixa em peças lisas (vestido, saia).
+            let edgeSum = 0, edgeSamples = 0;
+            for (let gy = 0; gy < gridSize; gy++) {
+                for (let gx = 0; gx < gridSize; gx++) {
+                    if (gx > 0) { edgeSum += Math.abs(grayGrid[gy][gx] - grayGrid[gy][gx - 1]); edgeSamples++; }
+                    if (gy > 0) { edgeSum += Math.abs(grayGrid[gy][gx] - grayGrid[gy - 1][gx]); edgeSamples++; }
+                }
+            }
+            const edgeDensity = Math.min(1, (edgeSum / edgeSamples) / 60);
+
+            return {
+                r: domR, g: domG, b: domB,
+                avgSaturation: satSum / (gridSize * gridSize),
+                avgBrightness: lightSum / (gridSize * gridSize),
+                edgeDensity
+            };
+        }
+
+        /** Chama o motor de IA em nuvem (Netlify Function + Postgres + k-NN). */
+        async function analyzeGarmentScan(rgb, categoryFeatures) {
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 8000);
+                const res = await fetch(`${API_BASE}/scan/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rgb, category: categoryFeatures }),
+                    signal: controller.signal
+                });
+                clearTimeout(timeout);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return await res.json();
+            } catch (err) {
+                console.warn('Falha ao consultar a IA em nuvem, usando fallback local.', err);
+                return null;
+            }
+        }
+
+        /** Mostra o painel "IA não tem certeza" com sugestões alternativas
+         *  clicáveis quando a confiança do modelo está baixa. */
+        function renderAiConfidencePanel() {
+            const panel = document.getElementById('modal-ai-confidence');
+            const colorBox = document.getElementById('modal-ai-color-alternatives');
+            const catBox = document.getElementById('modal-ai-category-alternatives');
+            colorBox.innerHTML = ''; colorBox.classList.add('hidden');
+            catBox.innerHTML = ''; catBox.classList.add('hidden');
+
+            const pred = lastScanPrediction;
+            const colorUnsure = pred && pred.color && pred.color.needsReview;
+            const categoryUnsure = pred && pred.category && pred.category.needsReview;
+
+            if (!pred || pred.offline || (!colorUnsure && !categoryUnsure)) {
+                panel.classList.add('hidden');
+                return;
+            }
+            panel.classList.remove('hidden');
+
+            if (colorUnsure && pred.color.alternatives?.length) {
+                colorBox.classList.remove('hidden');
+                pred.color.alternatives.forEach(alt => {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'px-3 py-1.5 bg-white dark:bg-slate-900 border border-amber-400/60 rounded-full text-[11px] font-bold text-gray-700 dark:text-gray-200 hover:bg-amber-500 hover:text-white transition-all';
+                    btn.textContent = `🎨 ${alt.label} · ${Math.round(alt.score * 100)}%`;
+                    btn.onclick = () => applyColorSuggestion(alt.label);
+                    colorBox.appendChild(btn);
+                });
+            }
+            if (categoryUnsure && pred.category.alternatives?.length) {
+                catBox.classList.remove('hidden');
+                pred.category.alternatives.forEach(alt => {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'px-3 py-1.5 bg-white dark:bg-slate-900 border border-amber-400/60 rounded-full text-[11px] font-bold text-gray-700 dark:text-gray-200 hover:bg-amber-500 hover:text-white transition-all';
+                    btn.textContent = `👕 ${categoryLabelPt(alt.label)} · ${Math.round(alt.score * 100)}%`;
+                    btn.onclick = () => applyCategorySuggestion(alt.label);
+                    catBox.appendChild(btn);
+                });
+            }
+        }
+
+        function applyColorSuggestion(label) {
+            document.getElementById('modal-item-color-primary').value = label;
+            showToast(`✏️ Cor ajustada para "${label}" — obrigado, isso ajuda a IA a aprender!`, 'info', 3000);
+        }
+        function applyCategorySuggestion(value) {
+            document.getElementById('modal-item-category').value = value;
+            showToast(`✏️ Categoria ajustada para "${categoryLabelPt(value)}" — obrigado, isso ajuda a IA a aprender!`, 'info', 3000);
         }
 
         // Helper RGB matching functions
@@ -3645,6 +4126,8 @@
             return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
         }
 
+        // Estimativa local de cor (sem rede) — usada como fallback instantâneo
+        // enquanto a IA em nuvem não responde, e quando ela está indisponível.
         function findClosestColorName(r, g, b) {
             // Colors mapping values in RGB
             const colorRgbMap = {

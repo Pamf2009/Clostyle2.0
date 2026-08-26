@@ -1031,12 +1031,6 @@
                             <div class="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
                                 <span class="text-[10px] text-red-500/90 font-bold uppercase tracking-wider animate-pulse">Área de Leitura IA</span>
                             </div>
-
-                            <!-- Recognition label overlay -->
-                            <div class="absolute -bottom-12 left-2 right-2 bg-red-600/90 backdrop-blur text-white text-[10px] py-2 px-3 rounded-xl text-center font-bold shadow-lg pointer-events-auto">
-                                <i class="fa-solid fa-microchip-ai mr-1"></i>
-                                <span id="camera-label-class">Detectando...</span> (<span id="camera-label-score">0.0%</span>)
-                            </div>
                         </div>
 
                         <!-- Top corners HUD data -->
@@ -3729,9 +3723,6 @@
                     }
                 }
 
-                // Run Bounding Box simulation loop
-                runBoundingBoxesLoop();
-
             } catch (err) {
                 console.error("Erro na Câmera:", err);
                 updateCameraStatus('denied');
@@ -3779,11 +3770,6 @@
             
             const overlay = document.getElementById('camera-hud-overlay');
             if (overlay) overlay.classList.add('hidden');
-
-            if (detectionInterval) {
-                clearInterval(detectionInterval);
-                detectionInterval = null;
-            }
         }
 
         function toggleCameraFacingMode() {
@@ -3805,29 +3791,6 @@
         function changeCameraDevice(deviceId) {
             if (!deviceId) return;
             startLiveCamera(deviceId);
-        }
-
-        // Automated scanning bounding boxes labeling
-        const cvLabels = ['Camiseta', 'Calça Jeans', 'Jaqueta de Couro', 'Tênis Running', 'Vestido Floral', 'Moletom com Capuz', 'Sapato Social'];
-        let detectionInterval = null;
-
-        function runBoundingBoxesLoop() {
-            if (detectionInterval) clearInterval(detectionInterval);
-            
-            const labelClassNode = document.getElementById('camera-label-class');
-            const labelScoreNode = document.getElementById('camera-label-score');
-            
-            detectionInterval = setInterval(() => {
-                if (!cameraStream) {
-                    clearInterval(detectionInterval);
-                    return;
-                }
-                const randomLabel = cvLabels[Math.floor(Math.random() * cvLabels.length)];
-                const randomScore = (85 + Math.random() * 14.5).toFixed(1);
-                
-                if (labelClassNode) labelClassNode.textContent = randomLabel;
-                if (labelScoreNode) labelScoreNode.textContent = `${randomScore}%`;
-            }, 2500);
         }
 
         // Capture Snapshot from stream

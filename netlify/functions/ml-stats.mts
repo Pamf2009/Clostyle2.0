@@ -6,12 +6,10 @@
 // correções registradas.
 import type { Config } from "@netlify/functions";
 import { json, serverError } from "./lib/http.mts";
-import { db } from "./lib/db.mts";
-import { colorDistance, rgbToHsl } from "./lib/colorModel.mts";
+import { colorDistance, getAllColorExamples, type ColorExample } from "./lib/colorModel.mts";
+import { categoryDistance, getAllCategoryExamples, type CategoryExample } from "./lib/categoryModel.mts";
+import { getRecentScanEvents } from "./lib/scanEvents.mts";
 import { weightedKnnClassify } from "./lib/knn.mts";
-
-interface ColorRow { r: number; g: number; b: number; h: number; s: number; l: number; label: string; weight: number; source: string; }
-interface CategoryRow { aspect_ratio: number; avg_saturation: number; avg_brightness: number; edge_density: number; label: string; weight: number; source: string; }
 
 const MAX_EVAL_SAMPLE = 150;
 
@@ -29,8 +27,7 @@ function leaveOneOutAccuracy<T>(
 
   const sample = rows.length > MAX_EVAL_SAMPLE ? shuffle(rows).slice(0, MAX_EVAL_SAMPLE) : rows;
   let correct = 0;
-  for (let i = 0; i < sample.length; i++) {
-    const target = sample[i];
+  for (const target of sample) {
     const rest = rows.filter((r) => r !== target);
     const result = weightedKnnClassify(rest, (r) => distanceFn(target, r), getLabel, getWeight, { k: 9 });
     if (result.predicted === getLabel(target)) correct++;
@@ -57,69 +54,47 @@ export default async (req: Request): Promise<Response> => {
   }
 
   try {
-    const database = db();
-
-    const colorRows = (await database.sql`SELECT r, g, b, h, s, l, label, weight, source FROM color_training_examples`) as ColorRow[];
-    const categoryRows = (await database.sql`SELECT aspect_ratio, avg_saturation, avg_brightness, edge_density, label, weight, source FROM category_training_examples`) as CategoryRow[];
+    const [colorExamples, categoryExamples, recentEvents] = await Promise.all([
+      getAllColorExamples(),
+      getAllCategoryExamples(),
+      getRecentScanEvents(15),
+    ]);
 
     const colorAcc = leaveOneOutAccuracy(
-      colorRows,
-      (a, b) => colorDistance({ h: a.h, s: a.s, l: a.l }, { h: b.h, s: b.s, l: b.l }),
+      colorExamples,
+      (a: ColorExample, b: ColorExample) => colorDistance(a, b),
       (r) => r.label,
       (r) => r.weight
     );
     const categoryAcc = leaveOneOutAccuracy(
-      categoryRows,
-      (a, b) =>
-        Math.sqrt(
-          2.5 * (a.aspect_ratio - b.aspect_ratio) ** 2 +
-            0.6 * (a.avg_saturation - b.avg_saturation) ** 2 +
-            0.6 * (a.avg_brightness - b.avg_brightness) ** 2 +
-            1 * (a.edge_density - b.edge_density) ** 2
-        ),
+      categoryExamples,
+      (a: CategoryExample, b: CategoryExample) => categoryDistance(a, b),
       (r) => r.label,
       (r) => r.weight
     );
 
-    // Guarda um snapshot para permitir gráfico de evolução no futuro.
-    if (colorAcc.accuracy !== null) {
-      await database.sql`INSERT INTO model_metrics (model_name, accuracy, total_examples) VALUES ('color', ${colorAcc.accuracy}, ${colorRows.length})`;
-    }
-    if (categoryAcc.accuracy !== null) {
-      await database.sql`INSERT INTO model_metrics (model_name, accuracy, total_examples) VALUES ('category', ${categoryAcc.accuracy}, ${categoryRows.length})`;
-    }
-
-    const recentEvents = await database.sql`
-      SELECT predicted_color, corrected_color, predicted_category, corrected_category,
-             color_confidence, category_confidence, created_at
-      FROM scan_events
-      ORDER BY created_at DESC
-      LIMIT 15
-    `;
-
-    const [colorCounts] = (await database.sql`
-      SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE source = 'user_feedback')::int AS from_user
-      FROM color_training_examples
-    `) as { total: number; from_user: number }[];
-    const [categoryCounts] = (await database.sql`
-      SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE source = 'user_feedback')::int AS from_user
-      FROM category_training_examples
-    `) as { total: number; from_user: number }[];
-
     return json({
       color: {
-        trainingSetSize: colorCounts?.total ?? 0,
-        fromUserCorrections: colorCounts?.from_user ?? 0,
+        trainingSetSize: colorExamples.length,
+        fromUserCorrections: colorExamples.filter((e) => e.source === "user_feedback").length,
         estimatedAccuracy: colorAcc.accuracy,
         evaluatedOn: colorAcc.evaluated,
       },
       category: {
-        trainingSetSize: categoryCounts?.total ?? 0,
-        fromUserCorrections: categoryCounts?.from_user ?? 0,
+        trainingSetSize: categoryExamples.length,
+        fromUserCorrections: categoryExamples.filter((e) => e.source === "user_feedback").length,
         estimatedAccuracy: categoryAcc.accuracy,
         evaluatedOn: categoryAcc.evaluated,
       },
-      recentEvents,
+      recentEvents: recentEvents.map((e) => ({
+        predicted_color: e.predictedColor,
+        corrected_color: e.correctedColor,
+        predicted_category: e.predictedCategory,
+        corrected_category: e.correctedCategory,
+        color_confidence: e.colorConfidence,
+        category_confidence: e.categoryConfidence,
+        created_at: e.createdAt,
+      })),
     });
   } catch (err) {
     return serverError(err);

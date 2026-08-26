@@ -1,11 +1,10 @@
 # Escaneamento de Roupas com IA — Banco de Dados + Machine Learning
 
 Este documento descreve a nova arquitetura de escaneamento de roupas do CloStyle:
-um banco de dados real (Postgres, provisionado automaticamente pela Netlify) e um
-motor de Machine Learning que **aprende sozinho** a partir das correções feitas
-pelo próprio usuário — exatamente o cenário descrito no pedido original: escanear
-uma blusa azul, a IA errar dizendo "Rosa", e o app usar essa correção para acertar
-da próxima vez.
+um banco de dados real (Netlify Blobs) e um motor de Machine Learning que
+**aprende sozinho** a partir das correções feitas pelo próprio usuário —
+exatamente o cenário descrito no pedido original: escanear uma blusa azul, a IA
+errar dizendo "Rosa", e o app usar essa correção para acertar da próxima vez.
 
 ## 1. Por que o scanner antigo errava a cor?
 
@@ -21,7 +20,7 @@ tendo matiz (a cor em si) completamente diferente. Não havia banco de dados, n�
 havia memória de nada, e a "IA" de categoria/marca/material era, na real, um texto
 fixo (`'camisetas'`, `'Nike'`, ...) — nunca vinha da imagem.
 
-## 2. Arquitetura nova
+## 2. Arquitetura
 
 ```
 Câmera (navegador)
@@ -33,18 +32,30 @@ netlify/functions/ml-stats.mts      ──┤
 netlify/functions/wardrobe.mts      ──┘
    │
    ▼
-Netlify DB (Postgres, auto-provisionado) — netlify/database/migrations/
+Netlify Blobs (armazenamento de objetos nativo da Netlify)
 ```
 
-- **Banco de dados**: [`@netlify/database`](https://docs.netlify.com/) — um Postgres
-  é provisionado automaticamente no primeiro deploy (ou `netlify dev`), sem
-  necessidade de criar/configurar nada manualmente nem guardar connection string.
+- **Banco de dados: Netlify Blobs** (`@netlify/blobs`) — armazenamento de
+  objetos nativo da plataforma, sem nenhuma configuração, extensão ou conta
+  externa necessária. Funciona automaticamente em qualquer função Netlify.
+  > Nota: a primeira versão deste PR usava **Netlify DB (Postgres via a
+  > extensão Neon)**, que provisionava um banco relacional automaticamente.
+  > Essa extensão foi **descontinuada para criação de novos bancos** (mensagem
+  > da própria Netlify: *"This Netlify DB extension has been discontinued. New
+  > database creation is no longer available"*), o que quebrava o deploy. A
+  > arquitetura foi migrada para Blobs, que é 100% suportado e não depende de
+  > nenhuma extensão de terceiros.
 - **Funções serverless**: 4 rotas HTTP (`/api/wardrobe`, `/api/scan/analyze`,
   `/api/scan/feedback`, `/api/ml/stats`) em `netlify/functions/*.mts`.
-- **Migrações**: `netlify/database/migrations/` — rodam automaticamente a cada
-  deploy. A primeira cria o esquema; as duas seguintes populam uma paleta semente
-  de ~50 cores e ~39 exemplos de categoria (heurísticos), para o modelo já
-  responder algo sensato antes de qualquer uso real.
+- **Isolamento por deploy**: em produção os dados ficam num store global
+  (`getStore`); em qualquer outro contexto (deploy preview, branch deploy,
+  `netlify dev`) cada deploy tem seu próprio store isolado (`getDeployStore`)
+  — o preview deste PR não mistura dados de teste com produção, o mesmo
+  princípio que um banco por-branch teria.
+- **Seed automático**: na primeira leitura de cada store (site novo ou
+  deploy preview novo), o código popula automaticamente uma base semente de
+  ~50 cores e ~39 exemplos de categoria (`netlify/functions/lib/seedData.mts`),
+  para o modelo já responder algo sensato antes de qualquer uso real.
 
 ## 3. O modelo de Machine Learning
 
@@ -87,7 +98,7 @@ npm install
 npm run test:ml
 ```
 
-Ele verifica, sem precisar de banco de dados: matiz cíclico (0°/360°), que azul
+Ele verifica, sem precisar de nenhum store real: matiz cíclico (0°/360°), que azul
 nítido classifica como azul, que **azul escuro sob luz ruim não vira rosa**, que
 rosa continua sendo reconhecido, e que **uma única correção do usuário já muda o
 resultado da próxima classificação** (aprendizado online).
@@ -121,16 +132,16 @@ conexão voltar.
 Para não reescrever toda a extensa lógica de renderização já existente (baseada
 em `localStorage`), o guarda-roupa continua **local-first**: toda leitura da UI
 usa `localStorage`, como antes. A cada criação/edição, o item é também enviado
-para `POST /api/wardrobe` como cópia de segurança em Postgres — isso já cria a
-base para, no futuro, sincronizar entre dispositivos ou treinar por usuário.
+para `POST /api/wardrobe` como cópia de segurança em Netlify Blobs — isso já cria
+a base para, no futuro, sincronizar entre dispositivos.
 
 ## 6. Rodando localmente
 
 ```bash
 npm install
-npm run test:ml        # testa o motor de ML sem precisar de banco
-netlify dev             # requer Netlify CLI logada e o site linkado — provisiona
-                         # o Postgres automaticamente e roda as funções + migrações
+npm run test:ml        # testa o motor de ML sem precisar de nenhum store real
+netlify dev             # requer Netlify CLI logada e o site linkado — Blobs
+                         # funciona automaticamente, sem configuração
 ```
 
 ## 7. Limitações honestas
@@ -142,3 +153,7 @@ netlify dev             # requer Netlify CLI logada e o site linkado — provisi
   entre células de uma grade), não uma detecção de estampa de verdade.
 - A precisão de cor melhora rápido com uso porque o problema é bem definido
   (poucas classes, sinal forte); a de categoria melhora mais devagar.
+- Netlify Blobs é "eventualmente consistente" por padrão; os stores de
+  treinamento/eventos usam `consistency: 'strong'` para que uma correção do
+  usuário já valha na próxima leitura, ao custo de leituras levemente mais
+  lentas (aceitável no volume de uso de um guarda-roupa pessoal).

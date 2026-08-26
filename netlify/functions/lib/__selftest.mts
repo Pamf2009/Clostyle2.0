@@ -8,8 +8,7 @@
 
 import { rgbToHsl, colorDistance, hueDistance, type RgbColor } from "./colorModel.mts";
 import { weightedKnnClassify } from "./knn.mts";
-// @ts-expect-error script utilitário em JS puro, sem .d.ts (só usado neste teste)
-import { SEED_PALETTE } from "../../../scripts/gen-color-seed-sql.mjs";
+import { SEED_COLORS } from "./seedData.mts";
 
 let failures = 0;
 function assert(cond: boolean, msg: string) {
@@ -24,7 +23,7 @@ function assert(cond: boolean, msg: string) {
 type SeedRow = { r: number; g: number; b: number; h: number; s: number; l: number; label: string; weight: number };
 
 function buildSeedRows(): SeedRow[] {
-  return (SEED_PALETTE as [string, number, number, number][]).map(([label, r, g, b]) => {
+  return SEED_COLORS.map(([label, r, g, b]) => {
     const { h, s, l } = rgbToHsl({ r, g, b });
     return { r, g, b, h, s, l, label, weight: 1 };
   });

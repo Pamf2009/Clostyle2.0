@@ -10,8 +10,9 @@
 // MATIZ (hue, a "cor" em si) do que a brilho/saturação — o que é como o olho
 // humano de fato distingue cores — e o conjunto de comparação cresce e se
 // corrige sozinho a cada correção que o usuário faz (ver addColorExample).
-import { db } from "./db.mts";
+import { getBlobStore } from "./blobStore.mts";
 import { weightedKnnClassify, type ClassificationResult } from "./knn.mts";
+import { SEED_COLORS } from "./seedData.mts";
 
 export interface RgbColor {
   r: number;
@@ -42,15 +43,41 @@ export function rgbToHsl({ r, g, b }: RgbColor): Hsl {
   return { h, s, l };
 }
 
-interface ColorExampleRow {
-  r: number;
-  g: number;
-  b: number;
-  h: number;
-  s: number;
-  l: number;
+export interface ColorExample extends Hsl, RgbColor {
   label: string;
+  source: "seed" | "user_feedback";
   weight: number;
+  itemId: string | null;
+  createdAt: string;
+}
+
+const STORE_NAME = "ml-color-examples";
+const BLOB_KEY = "examples";
+const MAX_EXAMPLES = 4000; // limite generoso; mantém as mais recentes se estourar
+
+function seedExamples(): ColorExample[] {
+  return SEED_COLORS.map(([label, r, g, b]) => ({
+    r, g, b,
+    ...rgbToHsl({ r, g, b }),
+    label,
+    source: "seed" as const,
+    weight: 1,
+    itemId: null,
+    createdAt: new Date(0).toISOString(),
+  }));
+}
+
+async function loadExamples(): Promise<ColorExample[]> {
+  const store = getBlobStore(STORE_NAME);
+  const existing = await store.get(BLOB_KEY, { type: "json" });
+  if (existing && Array.isArray(existing) && existing.length > 0) {
+    return existing as ColorExample[];
+  }
+  // Primeira vez que este store é lido (site novo / deploy preview novo):
+  // popula com a base semente para o modelo já responder algo sensato.
+  const seeded = seedExamples();
+  await store.setJSON(BLOB_KEY, seeded);
+  return seeded;
 }
 
 export function hueDistance(h1: number, h2: number): number {
@@ -77,14 +104,11 @@ export function colorDistance(a: Hsl, b: Hsl): number {
 
 export async function classifyColor(rgb: RgbColor): Promise<ClassificationResult> {
   const hsl = rgbToHsl(rgb);
-  const database = db();
-  const rows = (await database.sql`
-    SELECT r, g, b, h, s, l, label, weight FROM color_training_examples
-  `) as ColorExampleRow[];
+  const examples = await loadExamples();
 
   return weightedKnnClassify(
-    rows,
-    (row) => colorDistance(hsl, { h: row.h, s: row.s, l: row.l }),
+    examples,
+    (row) => colorDistance(hsl, row),
     (row) => row.label,
     (row) => row.weight,
     { k: 9, reviewConfidenceThreshold: 0.55, closeCallRatioThreshold: 0.82 }
@@ -98,21 +122,27 @@ export async function addColorExample(
   source: "seed" | "user_feedback",
   itemId: string | null = null
 ): Promise<void> {
+  const store = getBlobStore(STORE_NAME);
+  const examples = await loadExamples();
   const hsl = rgbToHsl(rgb);
   const weight = source === "user_feedback" ? 3 : 1;
-  const database = db();
-  await database.sql`
-    INSERT INTO color_training_examples (r, g, b, h, s, l, label, source, weight, item_id)
-    VALUES (${rgb.r}, ${rgb.g}, ${rgb.b}, ${hsl.h}, ${hsl.s}, ${hsl.l}, ${label}, ${source}, ${weight}, ${itemId})
-  `;
+
+  examples.push({ ...rgb, ...hsl, label, source, weight, itemId, createdAt: new Date().toISOString() });
+
+  // Mantém as mais recentes se passar do limite (as mais antigas já
+  // cumpriram seu papel de moldar exemplos futuros via correções acumuladas).
+  const trimmed = examples.length > MAX_EXAMPLES ? examples.slice(examples.length - MAX_EXAMPLES) : examples;
+  await store.setJSON(BLOB_KEY, trimmed);
+}
+
+export async function getAllColorExamples(): Promise<ColorExample[]> {
+  return loadExamples();
 }
 
 export async function countColorExamples(): Promise<{ total: number; fromFeedback: number }> {
-  const database = db();
-  const [row] = (await database.sql`
-    SELECT COUNT(*)::int AS total,
-           COUNT(*) FILTER (WHERE source = 'user_feedback')::int AS from_feedback
-    FROM color_training_examples
-  `) as { total: number; from_feedback: number }[];
-  return { total: row?.total ?? 0, fromFeedback: row?.from_feedback ?? 0 };
+  const examples = await loadExamples();
+  return {
+    total: examples.length,
+    fromFeedback: examples.filter((e) => e.source === "user_feedback").length,
+  };
 }

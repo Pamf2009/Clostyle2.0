@@ -9,7 +9,7 @@ import type { Config } from "@netlify/functions";
 import { badRequest, json, serverError } from "./lib/http.mts";
 import { addColorExample, type RgbColor } from "./lib/colorModel.mts";
 import { addCategoryExample, type CategoryFeatures } from "./lib/categoryModel.mts";
-import { db } from "./lib/db.mts";
+import { appendScanEvent } from "./lib/scanEvents.mts";
 
 interface FeedbackBody {
   rgb?: RgbColor;
@@ -71,18 +71,17 @@ export default async (req: Request): Promise<Response> => {
       categoryLearned = true;
     }
 
-    const database = db();
-    await database.sql`
-      INSERT INTO scan_events (
-        item_id, predicted_color, color_confidence, color_needed_review, corrected_color,
-        predicted_category, category_confidence, category_needed_review, corrected_category,
-        features
-      ) VALUES (
-        ${itemId}, ${predictedColor}, ${colorConfidence}, ${colorNeededReview}, ${finalColor},
-        ${predictedCategory}, ${categoryConfidence}, ${categoryNeededReview}, ${finalCategory},
-        ${JSON.stringify({ rgb, categoryFeatures })}
-      )
-    `;
+    await appendScanEvent({
+      itemId,
+      predictedColor,
+      colorConfidence,
+      colorNeededReview,
+      correctedColor: finalColor,
+      predictedCategory,
+      categoryConfidence,
+      categoryNeededReview,
+      correctedCategory: finalCategory,
+    });
 
     const colorWasCorrection = Boolean(predictedColor && finalColor && predictedColor !== finalColor);
     const categoryWasCorrection = Boolean(predictedCategory && finalCategory && predictedCategory !== finalCategory);

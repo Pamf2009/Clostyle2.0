@@ -2124,9 +2124,15 @@
                         </h4>
                         <p class="text-xs text-gray-400 mt-1">A cada peça escaneada e confirmada/corrigida, o modelo grava um novo exemplo no banco e melhora sozinho. Sem correções ainda, é normal errar mais — quanto mais você usa, mais preciso fica.</p>
                     </div>
-                    <button onclick="loadAiLearningStats()" id="btn-refresh-ai-stats" class="shrink-0 w-9 h-9 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 flex items-center justify-center text-gray-500 dark:text-gray-300" title="Atualizar estatísticas">
-                        <i class="fa-solid fa-rotate"></i>
-                    </button>
+                    <div class="shrink-0 flex items-center gap-2">
+                        <button onclick="openBulkTrainModal()" class="px-3 py-2 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all" title="Treinar a IA em lote">
+                            <i class="fa-solid fa-graduation-cap"></i>
+                            <span class="hidden sm:inline">Treinar em Lote</span>
+                        </button>
+                        <button onclick="loadAiLearningStats()" id="btn-refresh-ai-stats" class="w-9 h-9 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 flex items-center justify-center text-gray-500 dark:text-gray-300" title="Atualizar estatísticas">
+                            <i class="fa-solid fa-rotate"></i>
+                        </button>
+                    </div>
                 </div>
 
                 <div class="grid grid-cols-2 gap-3" id="ai-stats-grid">
@@ -2162,6 +2168,59 @@
         </section>
 
     </main>
+
+    <!-- ==================== MODAL: TREINAR IA EM LOTE ==================== -->
+    <div id="bulk-train-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 hidden opacity-0 transition-opacity duration-300 p-4">
+        <div class="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-3xl p-6 w-full max-w-2xl shadow-2xl transition-transform duration-300 transform scale-95 flex flex-col max-h-[90vh]">
+            <!-- Header -->
+            <div class="flex justify-between items-start gap-3 pb-4 border-b border-gray-100 dark:border-slate-800 shrink-0">
+                <div>
+                    <h3 class="text-lg font-extrabold text-gray-800 dark:text-gray-100">🧠 Treinar IA em Lote</h3>
+                    <p class="text-xs text-gray-400 mt-1">Adicione vários exemplos de uma vez — cada um vale como uma correção real do usuário (peso maior que a base semente) e já entra na próxima classificação.</p>
+                </div>
+                <button onclick="closeBulkTrainModal()" class="w-8 h-8 shrink-0 text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <!-- Tabs -->
+            <div class="flex gap-2 pt-4 shrink-0">
+                <button type="button" onclick="switchBulkTrainTab('color')" id="bulk-tab-btn-color" class="px-4 py-2 text-xs font-bold rounded-xl transition-all">🎨 Cor</button>
+                <button type="button" onclick="switchBulkTrainTab('category')" id="bulk-tab-btn-category" class="px-4 py-2 text-xs font-bold rounded-xl transition-all">👕 Categoria</button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto py-4 space-y-4 no-scrollbar">
+                <!-- Aba Cor -->
+                <div id="bulk-tab-color" class="space-y-3">
+                    <p class="text-xs text-gray-400">Escolha uma cor e o nome que a IA deve aprender a reconhecer para ela. Use os mesmos nomes já cadastrados no app (aparecem como sugestão ao digitar) para reforçar as classes existentes, ou crie um nome novo.</p>
+                    <div id="bulk-color-rows" class="space-y-2"></div>
+                    <button type="button" onclick="addBulkColorRow()" class="w-full py-2.5 border-2 border-dashed border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-500 dark:text-gray-400 hover:border-red-500 hover:text-red-500 transition-all">
+                        <i class="fa-solid fa-plus mr-1"></i> Adicionar cor
+                    </button>
+                    <datalist id="known-color-names"></datalist>
+                </div>
+
+                <!-- Aba Categoria -->
+                <div id="bulk-tab-category" class="space-y-3 hidden">
+                    <p class="text-xs text-gray-400">Envie várias fotos de peças e diga a categoria certa de cada uma. A IA extrai as características de cada foto (proporção, textura...) e aprende com o lote inteiro.</p>
+                    <label class="block w-full py-4 border-2 border-dashed border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-500 dark:text-gray-400 hover:border-red-500 hover:text-red-500 transition-all text-center cursor-pointer">
+                        <i class="fa-solid fa-images mr-1"></i> Selecionar fotos
+                        <input type="file" accept="image/*" multiple class="hidden" onchange="handleBulkCategoryFiles(event)">
+                    </label>
+                    <div id="bulk-category-rows" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="pt-4 border-t border-gray-100 dark:border-slate-800 shrink-0 space-y-2">
+                <p class="text-xs text-gray-500 dark:text-gray-400 min-h-[1rem]" id="bulk-train-status"></p>
+                <div class="flex gap-2">
+                    <button onclick="closeBulkTrainModal()" class="flex-1 py-3 bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 font-bold rounded-xl text-sm">Fechar</button>
+                    <button onclick="submitBulkTraining()" id="btn-submit-bulk-train" class="flex-1 py-3 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-bold rounded-xl text-sm shadow">Enviar exemplos</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- ==================== DIALOGS & MODALS ==================== -->
 
@@ -3466,6 +3525,236 @@
                     <p class="text-[9px] text-gray-400 mt-1">${when}</p>
                 </div>`;
             }).join('');
+        }
+
+        // ==================== TREINAR IA EM LOTE ====================
+        // Ensina a IA vários exemplos de uma vez, sem precisar escanear peça
+        // por peça: reaproveita o mesmo endpoint /api/scan/feedback usado
+        // pelo fluxo normal de scan+correção — cada linha enviada aqui é
+        // gravada como fonte 'user_feedback' (peso 3×), igual a uma correção
+        // manual de verdade.
+        let bulkCategoryItems = [];
+        let bulkCategoryIdCounter = 0;
+
+        function openBulkTrainModal() {
+            // Sugestões de nomes de cor já conhecidos pelo app, pra manter
+            // consistência em vez de criar classes novas por erro de digitação.
+            const datalist = document.getElementById('known-color-names');
+            datalist.innerHTML = Object.keys(colorNameMap)
+                .filter(name => name !== 'Nenhuma')
+                .map(name => `<option value="${name}"></option>`)
+                .join('');
+
+            document.getElementById('bulk-color-rows').innerHTML = '';
+            document.getElementById('bulk-category-rows').innerHTML = '';
+            bulkCategoryItems = [];
+            document.getElementById('bulk-train-status').textContent = '';
+            switchBulkTrainTab('color');
+            addBulkColorRow();
+            addBulkColorRow();
+            addBulkColorRow();
+
+            const modal = document.getElementById('bulk-train-modal');
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modal.firstElementChild.classList.remove('scale-95');
+            }, 50);
+        }
+
+        function closeBulkTrainModal() {
+            const modal = document.getElementById('bulk-train-modal');
+            modal.classList.add('opacity-0');
+            modal.firstElementChild.classList.add('scale-95');
+            setTimeout(() => modal.classList.add('hidden'), 300);
+        }
+
+        function switchBulkTrainTab(tab) {
+            const activeClass = 'px-4 py-2 text-xs font-bold rounded-xl transition-all bg-red-500 text-white';
+            const inactiveClass = 'px-4 py-2 text-xs font-bold rounded-xl transition-all bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-300';
+            document.getElementById('bulk-tab-color').classList.toggle('hidden', tab !== 'color');
+            document.getElementById('bulk-tab-category').classList.toggle('hidden', tab !== 'category');
+            document.getElementById('bulk-tab-btn-color').className = tab === 'color' ? activeClass : inactiveClass;
+            document.getElementById('bulk-tab-btn-category').className = tab === 'category' ? activeClass : inactiveClass;
+        }
+
+        function addBulkColorRow() {
+            const container = document.getElementById('bulk-color-rows');
+            const row = document.createElement('div');
+            row.className = 'flex items-center gap-2 bulk-color-row';
+            row.innerHTML = `
+                <input type="color" value="#3b82f6" class="w-10 h-10 rounded-lg border border-gray-200 dark:border-slate-700 cursor-pointer shrink-0 bulk-color-swatch">
+                <input type="text" placeholder="Nome da cor (ex: Azul Royal)" list="known-color-names" class="flex-1 px-3 py-2.5 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-sm bulk-color-label">
+                <button type="button" onclick="this.closest('.bulk-color-row').remove()" class="w-9 h-9 shrink-0 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-500/10 flex items-center justify-center">
+                    <i class="fa-solid fa-trash-can text-xs"></i>
+                </button>
+            `;
+            container.appendChild(row);
+        }
+
+        function handleBulkCategoryFiles(event) {
+            const files = Array.from(event.target.files || []);
+            files.forEach(file => {
+                if (!file.type.startsWith('image/')) return;
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        // Redimensiona antes de extrair features (fotos de celular
+                        // em resolução total deixariam o getImageData pesado).
+                        const maxDim = 800;
+                        let w = img.width, h = img.height;
+                        if (w > maxDim || h > maxDim) {
+                            if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+                            else { w = Math.round(w * maxDim / h); h = maxDim; }
+                        }
+                        const canvas = document.createElement('canvas');
+                        canvas.width = w;
+                        canvas.height = h;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, w, h);
+
+                        const features = extractGarmentFeatures(ctx, w, h);
+                        const categoryFeatures = {
+                            aspectRatio: round3(w / h),
+                            avgSaturation: round3(features.avgSaturation),
+                            avgBrightness: round3(features.avgBrightness),
+                            edgeDensity: round3(features.edgeDensity)
+                        };
+
+                        // Miniatura pequena só para exibição na lista.
+                        const thumbSize = 96;
+                        let tw = img.width, th = img.height;
+                        if (tw > th) { th = Math.round(th * thumbSize / tw); tw = thumbSize; }
+                        else { tw = Math.round(tw * thumbSize / th); th = thumbSize; }
+                        const thumbCanvas = document.createElement('canvas');
+                        thumbCanvas.width = tw;
+                        thumbCanvas.height = th;
+                        thumbCanvas.getContext('2d').drawImage(img, 0, 0, tw, th);
+                        const thumbUrl = thumbCanvas.toDataURL('image/jpeg', 0.6);
+
+                        const id = 'bc_' + (bulkCategoryIdCounter++);
+                        bulkCategoryItems.push({ id, categoryFeatures, category: 'camisetas' });
+                        renderBulkCategoryRow(id, thumbUrl);
+                    };
+                    img.onerror = () => showToast(`⚠️ Não consegui ler "${file.name}".`, 'error');
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+            event.target.value = ''; // permite selecionar os mesmos arquivos de novo depois
+        }
+
+        function renderBulkCategoryRow(id, thumbUrl) {
+            const container = document.getElementById('bulk-category-rows');
+            const row = document.createElement('div');
+            row.className = 'flex items-center gap-3 p-2 bg-gray-50 dark:bg-slate-800/60 border border-gray-100 dark:border-slate-800 rounded-xl bulk-category-row';
+            row.dataset.id = id;
+            row.innerHTML = `
+                <img src="${thumbUrl}" class="w-12 h-12 rounded-lg object-cover border border-gray-200 dark:border-slate-700 shrink-0">
+                <select class="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg text-xs" onchange="updateBulkCategorySelection('${id}', this.value)">
+                    ${Object.entries(CATEGORY_LABELS_PT).map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}
+                </select>
+                <button type="button" onclick="removeBulkCategoryRow('${id}')" class="w-9 h-9 shrink-0 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-500/10 flex items-center justify-center">
+                    <i class="fa-solid fa-trash-can text-xs"></i>
+                </button>
+            `;
+            container.appendChild(row);
+        }
+
+        function updateBulkCategorySelection(id, value) {
+            const item = bulkCategoryItems.find(i => i.id === id);
+            if (item) item.category = value;
+        }
+
+        function removeBulkCategoryRow(id) {
+            bulkCategoryItems = bulkCategoryItems.filter(i => i.id !== id);
+            const row = document.querySelector(`.bulk-category-row[data-id="${id}"]`);
+            if (row) row.remove();
+        }
+
+        function hexToRgbBulk(hex) {
+            const clean = hex.replace('#', '');
+            return {
+                r: parseInt(clean.substring(0, 2), 16),
+                g: parseInt(clean.substring(2, 4), 16),
+                b: parseInt(clean.substring(4, 6), 16)
+            };
+        }
+
+        async function submitBulkTraining() {
+            const statusEl = document.getElementById('bulk-train-status');
+            const btn = document.getElementById('btn-submit-bulk-train');
+
+            const colorRows = Array.from(document.querySelectorAll('.bulk-color-row'))
+                .map(row => ({
+                    hex: row.querySelector('.bulk-color-swatch').value,
+                    label: row.querySelector('.bulk-color-label').value.trim()
+                }))
+                .filter(r => r.label);
+
+            const categoryItems = [...bulkCategoryItems];
+            const total = colorRows.length + categoryItems.length;
+
+            if (total === 0) {
+                showToast('⚠️ Adicione ao menos um exemplo de cor ou categoria antes de enviar.', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Enviando...';
+            let sent = 0, failed = 0;
+
+            for (const { hex, label } of colorRows) {
+                statusEl.textContent = `Enviando ${sent + failed + 1}/${total}...`;
+                try {
+                    const res = await fetch(`${API_BASE}/scan/feedback`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rgb: hexToRgbBulk(hex), finalColor: label })
+                    });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    sent++;
+                } catch (err) {
+                    console.warn('Falha ao enviar exemplo de cor em lote.', err);
+                    failed++;
+                }
+            }
+
+            for (const { categoryFeatures, category } of categoryItems) {
+                statusEl.textContent = `Enviando ${sent + failed + 1}/${total}...`;
+                try {
+                    const res = await fetch(`${API_BASE}/scan/feedback`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ categoryFeatures, finalCategory: category })
+                    });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    sent++;
+                } catch (err) {
+                    console.warn('Falha ao enviar exemplo de categoria em lote.', err);
+                    failed++;
+                }
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Enviar exemplos';
+
+            if (failed === 0) {
+                statusEl.textContent = `✅ ${sent} exemplo(s) enviados com sucesso!`;
+                showToast(`🧠 ${sent} exemplo(s) adicionados à base de treinamento da IA!`, 'success', 5000);
+                document.getElementById('bulk-color-rows').innerHTML = '';
+                document.getElementById('bulk-category-rows').innerHTML = '';
+                bulkCategoryItems = [];
+                addBulkColorRow();
+                addBulkColorRow();
+                addBulkColorRow();
+                loadAiLearningStats();
+            } else {
+                statusEl.textContent = `⚠️ ${sent} enviado(s), ${failed} falharam (sem conexão com o banco?).`;
+                showToast(`⚠️ ${failed} exemplo(s) falharam ao enviar. Verifique sua conexão e tente de novo.`, 'warning', 5000);
+            }
         }
 
         // ==================== IA CAMERA VISION COMPUTER SCANNER ====================

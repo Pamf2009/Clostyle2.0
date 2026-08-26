@@ -2363,7 +2363,47 @@
             'Amarela': '#eab308',
             'Laranja': '#f97316',
             'Marrom': '#78350f',
-            'Nenhuma': 'transparent'
+            'Nenhuma': 'transparent',
+            // Paleta ampliada — mesmos nomes que o motor de IA (ML) pode
+            // devolver ao escanear uma peça (ver netlify/functions/lib/seedData.mts).
+            // Sem estas entradas, peças com essas cores caíam no cinza
+            // genérico de fallback em qualquer bolinha/preview de cor.
+            'Cinza Chumbo': '#373a3f',
+            'Cinza Claro': '#9ca3af',
+            'Grafite': '#292d33',
+            'Off-White': '#f0ece1',
+            'Azul Marinho': '#14204a',
+            'Azul Royal': '#253cc7',
+            'Azul Claro': '#93c5fd',
+            'Azul Bebê': '#bfdbfe',
+            'Azul Petróleo': '#14505a',
+            'Ciano': '#22c5d2',
+            'Índigo': '#3f37c9',
+            'Verde Militar': '#4a582d',
+            'Verde Musgo': '#55633c',
+            'Verde Escuro': '#145a32',
+            'Verde Limão': '#a3e635',
+            'Verde Água': '#2dd4bf',
+            'Verde Oliva': '#6b723c',
+            'Vermelho Escuro': '#7f1d1d',
+            'Bordô': '#641423',
+            'Vinho': '#5a1428',
+            'Rosa Claro': '#f9a8d4',
+            'Rosa Choque': '#ff1493',
+            'Salmão': '#fa8072',
+            'Coral': '#ff7f50',
+            'Laranja Queimado': '#c2410c',
+            'Amarelo Mostarda': '#ca8a04',
+            'Marrom Café': '#5c3317',
+            'Caramelo': '#b46e3c',
+            'Bege': '#decaad',
+            'Nude': '#e0bea0',
+            'Areia': '#d2b48c',
+            'Caqui': '#bdb76b',
+            'Lilás': '#c4b5fd',
+            'Violeta': '#7c3aed',
+            'Dourado': '#d4af37',
+            'Prateado': '#c0c0c0'
         };
 
         // Colors mapping to CSS text styles
@@ -2910,13 +2950,15 @@
             const searchInput = document.getElementById('wardrobe-search').value.toLowerCase().trim();
             const sortMode = document.getElementById('wardrobe-sort').value;
 
-            // Filter
+            // Filter (campos podem faltar em itens importados/legados — nunca
+            // assumir que name/brand/primaryColor/category existem)
             let filteredItems = wardrobe.filter(item => {
                 const matchesCategory = activeWardrobeCategory === 'all' || item.category === activeWardrobeCategory;
-                const matchesSearch = item.name.toLowerCase().includes(searchInput) || 
-                                      item.brand.toLowerCase().includes(searchInput) || 
-                                      item.primaryColor.toLowerCase().includes(searchInput) || 
-                                      item.category.toLowerCase().includes(searchInput);
+                const haystack = [item.name, item.brand, item.primaryColor, item.category]
+                    .filter(Boolean)
+                    .join(' ')
+                    .toLowerCase();
+                const matchesSearch = haystack.includes(searchInput);
                 return matchesCategory && matchesSearch;
             });
 
@@ -2926,9 +2968,9 @@
             } else if (sortMode === 'usage-asc') {
                 filteredItems.sort((a, b) => (a.usageCount || 0) - (b.usageCount || 0));
             } else if (sortMode === 'name-asc') {
-                filteredItems.sort((a, b) => a.name.localeCompare(b.name));
+                filteredItems.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
             } else { // default recent
-                filteredItems.sort((a, b) => b.id.localeCompare(a.id));
+                filteredItems.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
             }
 
             if (filteredItems.length === 0) {
@@ -3041,6 +3083,7 @@
                 showToast(`🗑️ "${item.name}" removido com sucesso.`, 'info');
                 renderWardrobeList();
                 renderDashboard();
+                deleteWardrobeItemFromDb(itemId);
             }
         }
 
@@ -3125,12 +3168,44 @@
             const file = event.target.files[0];
             if (!file) return;
 
+            if (!file.type.startsWith('image/')) {
+                showToast('⚠️ Selecione um arquivo de imagem (JPG, PNG...).', 'error');
+                event.target.value = '';
+                return;
+            }
+
             const reader = new FileReader();
             reader.onload = function(e) {
-                modalImageBase64 = e.target.result;
-                const preview = document.getElementById('modal-photo-preview');
-                preview.innerHTML = `<img src="${modalImageBase64}" class="w-full h-full object-cover">`;
-            }
+                // Redimensiona/comprime igual à captura pela câmera (máx. 640px,
+                // JPEG 65%): sem isso, uma foto de celular em resolução total
+                // (vários MB) ia direto pro localStorage sem compressão e podia
+                // estourar a cota do navegador (~5-10MB), quebrando o salvamento.
+                const img = new Image();
+                img.onload = () => {
+                    const maxDimension = 640;
+                    let targetWidth = img.width;
+                    let targetHeight = img.height;
+                    if (targetWidth > maxDimension || targetHeight > maxDimension) {
+                        if (targetWidth > targetHeight) {
+                            targetHeight = Math.round((targetHeight * maxDimension) / targetWidth);
+                            targetWidth = maxDimension;
+                        } else {
+                            targetWidth = Math.round((targetWidth * maxDimension) / targetHeight);
+                            targetHeight = maxDimension;
+                        }
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = targetWidth;
+                    canvas.height = targetHeight;
+                    canvas.getContext('2d').drawImage(img, 0, 0, targetWidth, targetHeight);
+
+                    modalImageBase64 = canvas.toDataURL('image/jpeg', 0.65);
+                    const preview = document.getElementById('modal-photo-preview');
+                    preview.innerHTML = `<img src="${modalImageBase64}" class="w-full h-full object-cover">`;
+                };
+                img.onerror = () => showToast('⚠️ Não foi possível ler essa imagem.', 'error');
+                img.src = e.target.result;
+            };
             reader.readAsDataURL(file);
         }
 
@@ -3194,7 +3269,15 @@
                 showToast('✨ Peça adicionada com sucesso ao guarda-roupa.', 'success');
             }
 
-            localStorage.setItem(STORAGE_WARDROBE_KEY, JSON.stringify(wardrobe));
+            try {
+                localStorage.setItem(STORAGE_WARDROBE_KEY, JSON.stringify(wardrobe));
+            } catch (err) {
+                // Cota do localStorage estourada (muitas fotos acumuladas, ~5-10MB
+                // no navegador) — a peça continua salva em memória e sincronizada
+                // com o banco em nuvem abaixo, mas avisamos que o backup local falhou.
+                console.warn('Falha ao salvar no localStorage (cota excedida?).', err);
+                showToast('⚠️ Armazenamento local cheio — considere remover fotos antigas. A peça foi sincronizada com a nuvem.', 'warning', 6000);
+            }
             renderWardrobeList();
             renderDashboard();
             closeItemModal();
@@ -3223,6 +3306,16 @@
                 });
             } catch (err) {
                 console.warn('Não foi possível sincronizar a peça com o banco de dados em nuvem agora.', err);
+            }
+        }
+
+        /** Remove o backup em nuvem de uma peça excluída — sem isso, itens
+         * apagados localmente ficariam "presos" para sempre no banco. */
+        async function deleteWardrobeItemFromDb(itemId) {
+            try {
+                await fetch(`${API_BASE}/wardrobe/${encodeURIComponent(itemId)}`, { method: 'DELETE' });
+            } catch (err) {
+                console.warn('Não foi possível remover a peça do banco de dados em nuvem agora.', err);
             }
         }
 
@@ -4088,9 +4181,14 @@
             }
             panel.classList.remove('hidden');
 
-            if (colorUnsure && pred.color.alternatives?.length) {
+            // A predição principal já foi aplicada nos campos do formulário —
+            // mostrar ela de novo como "alternativa" clicável é redundante.
+            const colorAlts = colorUnsure ? pred.color.alternatives?.filter(a => a.label !== pred.color.predicted) : [];
+            const categoryAlts = categoryUnsure ? pred.category.alternatives?.filter(a => a.label !== pred.category.predicted) : [];
+
+            if (colorAlts?.length) {
                 colorBox.classList.remove('hidden');
-                pred.color.alternatives.forEach(alt => {
+                colorAlts.forEach(alt => {
                     const btn = document.createElement('button');
                     btn.type = 'button';
                     btn.className = 'px-3 py-1.5 bg-white dark:bg-slate-900 border border-amber-400/60 rounded-full text-[11px] font-bold text-gray-700 dark:text-gray-200 hover:bg-amber-500 hover:text-white transition-all';
@@ -4099,9 +4197,9 @@
                     colorBox.appendChild(btn);
                 });
             }
-            if (categoryUnsure && pred.category.alternatives?.length) {
+            if (categoryAlts?.length) {
                 catBox.classList.remove('hidden');
-                pred.category.alternatives.forEach(alt => {
+                categoryAlts.forEach(alt => {
                     const btn = document.createElement('button');
                     btn.type = 'button';
                     btn.className = 'px-3 py-1.5 bg-white dark:bg-slate-900 border border-amber-400/60 rounded-full text-[11px] font-bold text-gray-700 dark:text-gray-200 hover:bg-amber-500 hover:text-white transition-all';
@@ -4594,10 +4692,12 @@
             const container = document.getElementById('color-matching-wardrobe');
             container.innerHTML = '';
 
-            const matched = wardrobe.filter(i => 
-                i.primaryColor.toLowerCase().includes(colorName.toLowerCase().slice(0, 4)) ||
-                colorName.toLowerCase().includes(i.primaryColor.toLowerCase().slice(0, 4))
-            );
+            const matched = wardrobe.filter(i => {
+                if (!i.primaryColor) return false; // peça importada/legada sem cor definida
+                const itemColor = i.primaryColor.toLowerCase();
+                const target = colorName.toLowerCase();
+                return itemColor.includes(target.slice(0, 4)) || target.includes(itemColor.slice(0, 4));
+            });
 
             if (matched.length === 0) {
                 container.innerHTML = `<span class="text-xs text-gray-400 py-3">Nenhuma peça nesta cor no guarda-roupa.</span>`;
@@ -4806,9 +4906,38 @@
                     if (Array.isArray(parsed)) {
                         // basic verification
                         if (parsed.length > 0 && parsed[0].name && parsed[0].category) {
-                            wardrobe = parsed;
+                            // Mescla de verdade (o toast sempre prometeu isso, mas o
+                            // código antigo substituía o guarda-roupa inteiro,
+                            // apagando peças em silêncio): itens do arquivo com o
+                            // mesmo id atualizam o existente, ids novos são
+                            // adicionados, o resto do guarda-roupa atual é mantido.
+                            const merged = [...wardrobe];
+                            let added = 0, updated = 0;
+                            parsed.forEach(rawItem => {
+                                if (!rawItem || !rawItem.id || !rawItem.name) return;
+                                // Normaliza para nunca deixar campo obrigatório
+                                // faltando — um JSON externo incompleto não pode
+                                // quebrar a busca/ordenação da lista depois.
+                                const importedItem = {
+                                    id: rawItem.id,
+                                    name: rawItem.name,
+                                    category: rawItem.category || 'acessorios',
+                                    brand: rawItem.brand || 'Sem Marca',
+                                    primaryColor: rawItem.primaryColor || 'Outra',
+                                    secondaryColor: rawItem.secondaryColor || 'Nenhuma',
+                                    size: rawItem.size || 'U',
+                                    material: rawItem.material || 'Outro',
+                                    createdAt: rawItem.createdAt || new Date().toISOString().split('T')[0],
+                                    usageCount: rawItem.usageCount || 0,
+                                    photo: rawItem.photo || ''
+                                };
+                                const idx = merged.findIndex(i => i.id === importedItem.id);
+                                if (idx !== -1) { merged[idx] = importedItem; updated++; }
+                                else { merged.push(importedItem); added++; }
+                            });
+                            wardrobe = merged;
                             localStorage.setItem(STORAGE_WARDROBE_KEY, JSON.stringify(wardrobe));
-                            showToast('✅ Guarda-roupa importado e mesclado com sucesso!', 'success');
+                            showToast(`✅ Guarda-roupa mesclado: ${added} peça(s) nova(s), ${updated} atualizada(s).`, 'success');
                             renderWardrobeList();
                             renderDashboard();
                         } else {

@@ -1,0 +1,20 @@
+{
+  "name": "clostyle",
+  "version": "2.1.0",
+  "private": true,
+  "description": "CloStyle - Plataforma Inteligente de Moda com IA. Escaneamento de roupas com banco de dados (Netlify Blobs) e motor de Machine Learning que aprende com as correções do usuário.",
+  "type": "module",
+  "scripts": {
+    "dev": "netlify dev",
+    "test:ml": "tsx netlify/functions/lib/__selftest.mts"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^9.1.6",
+    "@netlify/functions": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,11 @@
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# As rotas amigáveis /api/wardrobe, /api/scan/analyze, /api/scan/feedback e
+# /api/ml/stats são declaradas diretamente em cada função via `export const
+# config = { path: ... }` (netlify/functions/*.mts) — não precisam de
+# redirects aqui.

@@ -2707,12 +2707,21 @@
                                 <circle cx="12" cy="12" r="5" fill="${secondHex}" opacity="0.6"/>`;
             }
 
-            return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="100" height="100">
-                <rect width="100%" height="100%" fill="%23f3f4f6" rx="10"/>
+            // Bug crítico: a versão antiga só trocava "#" por "%23" e deixava
+            // as aspas do SVG (viewBox="...", fill="...") sem escapar. Ao cair
+            // dentro de outro atributo HTML (<img src="${...}">), a primeira
+            // aspas literal do SVG fechava o src="" cedo demais e o resto da
+            // marcação (SVG + alt/class do próprio <img>) virava texto visível
+            // na tela em vez de imagem — era exatamente isso que aparecia nos
+            // cards de looks (e em qualquer peça sem foto própria).
+            // encodeURIComponent escapa tudo corretamente de uma vez.
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="100" height="100">
+                <rect width="100%" height="100%" fill="#f3f4f6" rx="10"/>
                 <g transform="translate(0, 0)">
                     ${iconPath}
                 </g>
-            </svg>`.replace(/#/g, '%23');
+            </svg>`;
+            return `data:image/svg+xml,${encodeURIComponent(svg)}`;
         }
 
         // ==================== DASHBOARD SECTION ====================

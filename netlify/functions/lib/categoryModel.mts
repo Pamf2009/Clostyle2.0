@@ -28,7 +28,9 @@ export interface CategoryExample extends CategoryFeatures {
 const STORE_NAME = "ml-category-examples";
 const BLOB_KEY = "examples";
 const META_KEY = "meta";
-const MAX_EXAMPLES = 4000;
+// A base semente tem ~13 mil exemplos sozinha (1000 por categoria — ver
+// seedData.mts); ver colorModel.mts para o raciocínio completo do limite.
+const MAX_EXAMPLES = 20000;
 
 interface StoreMeta {
   seedVersion: number;

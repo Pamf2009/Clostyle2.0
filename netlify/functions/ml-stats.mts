@@ -12,11 +12,22 @@ import { getRecentScanEvents } from "./lib/scanEvents.mts";
 import { weightedKnnClassify } from "./lib/knn.mts";
 
 const MAX_EVAL_SAMPLE = 150;
+// A base semente cresceu bastante (até 1000 exemplos por classe — ver
+// seedData.mts). Um classify() individual continua rápido nesse tamanho
+// (~15ms mesmo em 40 mil linhas), mas essa função roda até MAX_EVAL_SAMPLE
+// classificações SEGUIDAS: sem um teto no tamanho do "resto" comparado em
+// cada uma, o tempo total escala com dataset × MAX_EVAL_SAMPLE e passa fácil
+// do timeout de uma function síncrona. Como as classes já são bem coesas
+// (pontos da mesma classe ficam bem próximos entre si), uma amostra
+// aleatória do resto já é estatisticamente suficiente pra medir a acurácia
+// — o classify() "de verdade" (scan-analyze) continua buscando no dataset
+// inteiro, só a MEDIÇÃO de acurácia é que usa essa amostra.
+const MAX_NEIGHBOR_POOL = 1500;
 
 /** Validação cruzada leave-one-out: para cada exemplo, classifica usando
- * todos os OUTROS exemplos e verifica se acertou o próprio rótulo. Uma
- * amostra honesta (e crescente) de "quão bem a IA está indo" com os dados
- * reais que ela já viu. */
+ * (uma amostra d)o resto dos exemplos e verifica se acertou o próprio
+ * rótulo. Uma amostra honesta (e crescente) de "quão bem a IA está indo" com
+ * os dados reais que ela já viu. */
 function leaveOneOutAccuracy<T>(
   rows: T[],
   distanceFn: (a: T, b: T) => number,
@@ -28,7 +39,7 @@ function leaveOneOutAccuracy<T>(
   const sample = rows.length > MAX_EVAL_SAMPLE ? shuffle(rows).slice(0, MAX_EVAL_SAMPLE) : rows;
   let correct = 0;
   for (const target of sample) {
-    const rest = rows.filter((r) => r !== target);
+    const rest = rows.length - 1 > MAX_NEIGHBOR_POOL ? randomSampleExcluding(rows, target, MAX_NEIGHBOR_POOL) : rows.filter((r) => r !== target);
     const result = weightedKnnClassify(rest, (r) => distanceFn(target, r), getLabel, getWeight, { k: 9 });
     if (result.predicted === getLabel(target)) correct++;
   }
@@ -42,6 +53,23 @@ function shuffle<T>(arr: T[]): T[] {
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy;
+}
+
+/** Amostra `count` elementos aleatórios de `rows` excluindo `exclude`, sem
+ * precisar varrer/filtrar o array inteiro (O(count) esperado em vez de
+ * O(n)) — importante com dataset grande chamado MAX_EVAL_SAMPLE vezes. */
+function randomSampleExcluding<T>(rows: T[], exclude: T, count: number): T[] {
+  const n = rows.length;
+  const chosenIndexes = new Set<number>();
+  const result: T[] = [];
+  while (result.length < count) {
+    const idx = Math.floor(Math.random() * n);
+    const row = rows[idx];
+    if (row === exclude || chosenIndexes.has(idx)) continue;
+    chosenIndexes.add(idx);
+    result.push(row);
+  }
+  return result;
 }
 
 function round(n: number): number {

@@ -54,7 +54,12 @@ export interface ColorExample extends Hsl, RgbColor {
 const STORE_NAME = "ml-color-examples";
 const BLOB_KEY = "examples";
 const META_KEY = "meta";
-const MAX_EXAMPLES = 4000; // limite generoso; mantém as mais recentes se estourar
+// Limite generoso; mantém as mais recentes se estourar (a base semente tem
+// ~41 mil exemplos sozinha desde o pedido de 1000 exemplos sintéticos por
+// cor — ver seedData.mts). Como o corte é sempre pelas mais RECENTES,
+// correções reais de usuário (user_feedback) nunca são as primeiras a cair;
+// exemplos semente antigos são descartados antes.
+const MAX_EXAMPLES = 60000;
 
 interface StoreMeta {
   seedVersion: number;
@@ -140,7 +145,14 @@ export async function classifyColor(rgb: RgbColor): Promise<ClassificationResult
     (row) => colorDistance(hsl, row),
     (row) => row.label,
     (row) => row.weight,
-    { k: 9, reviewConfidenceThreshold: 0.55, closeCallRatioThreshold: 0.82 }
+    // maxNeighborDistance calibrado a partir da própria paleta semente: o
+    // vizinho mais próximo de uma leitura que bate com uma cor conhecida
+    // fica tipicamente < 0.08 (mesma classe, só variando iluminação); leituras
+    // realmente ambíguas (ex.: azul bem escuro sob luz ruim, que fica com
+    // baixa saturação e por isso "parece" neutro em RGB) ficam > 0.18. 0.12
+    // fica confortavelmente no meio, sem gerar falsos "não sei" em leituras
+    // normais — ver __selftest.mts, teste 3.
+    { k: 9, reviewConfidenceThreshold: 0.55, closeCallRatioThreshold: 0.82, maxNeighborDistance: 0.12 }
   );
 }
 

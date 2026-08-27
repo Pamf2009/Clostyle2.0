@@ -23,12 +23,27 @@ export interface KnnOptions {
   reviewConfidenceThreshold?: number;
   /** se o 2º colocado chegar perto do 1º (razão), também pede revisão */
   closeCallRatioThreshold?: number;
+  /**
+   * Distância (na escala do próprio distanceFn) do vizinho mais próximo
+   * acima da qual, mesmo que os vizinhos concordem entre si, a predição é
+   * tratada como incerta. Existe porque "confiança" pura (o quanto os
+   * vizinhos concordam) e "familiaridade" (o quão perto o pior caso está de
+   * QUALQUER exemplo já visto) são coisas diferentes: com uma base semente
+   * densa (muitos exemplos por classe), é comum um ponto de fronteira ter
+   * k vizinhos todos da MESMA classe vizinha só por ela ser a mais próxima
+   * dentre as classes distantes — mesmo que na verdade nenhum exemplo do
+   * treino pareça de verdade com a leitura. Sem esse teto, a IA fica
+   * "confiante" por acaso, quando o certo é admitir que não reconhece a cor.
+   * Sem valor definido, esse teto fica desligado (Infinity).
+   */
+  maxNeighborDistance?: number;
 }
 
 const DEFAULTS: Required<KnnOptions> = {
   k: 9,
   reviewConfidenceThreshold: 0.55,
   closeCallRatioThreshold: 0.82,
+  maxNeighborDistance: Infinity,
 };
 
 export function weightedKnnClassify<T>(
@@ -38,7 +53,7 @@ export function weightedKnnClassify<T>(
   getWeight: (example: T) => number,
   opts: KnnOptions = {}
 ): ClassificationResult {
-  const { k, reviewConfidenceThreshold, closeCallRatioThreshold } = { ...DEFAULTS, ...opts };
+  const { k, reviewConfidenceThreshold, closeCallRatioThreshold, maxNeighborDistance } = { ...DEFAULTS, ...opts };
 
   if (examples.length === 0) {
     return {
@@ -76,7 +91,12 @@ export function weightedKnnClassify<T>(
   const top = sortedLabels[0];
   const second = sortedLabels[1];
   const closeCall = second ? second.score / top.score > closeCallRatioThreshold : false;
-  const needsReview = top.score < reviewConfidenceThreshold || closeCall;
+  // "Familiaridade": mesmo com 100% de concordância entre os vizinhos, se o
+  // mais próximo deles ainda está longe (nada no treino parece de verdade
+  // com essa leitura), a predição é um "menos pior entre os distantes", não
+  // um reconhecimento de verdade — ver comentário de maxNeighborDistance.
+  const tooFarFromAnything = neighbors[0].distance > maxNeighborDistance;
+  const needsReview = top.score < reviewConfidenceThreshold || closeCall || tooFarFromAnything;
 
   return {
     predicted: top.label,

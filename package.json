@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "netlify dev",
-    "test:ml": "tsx netlify/functions/lib/__selftest.mts"
+    "test:ml": "tsx netlify/functions/lib/__selftest.mts",
+    "eval:ml": "tsx netlify/functions/lib/__evalAccuracy.mts"
   },
   "dependencies": {
     "@netlify/blobs": "^9.1.6",

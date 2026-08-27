@@ -52,10 +52,19 @@ Netlify Blobs (armazenamento de objetos nativo da Netlify)
   `netlify dev`) cada deploy tem seu próprio store isolado (`getDeployStore`)
   — o preview deste PR não mistura dados de teste com produção, o mesmo
   princípio que um banco por-branch teria.
-- **Seed automático**: na primeira leitura de cada store (site novo ou
-  deploy preview novo), o código popula automaticamente uma base semente de
-  ~50 cores e ~39 exemplos de categoria (`netlify/functions/lib/seedData.mts`),
-  para o modelo já responder algo sensato antes de qualquer uso real.
+- **Seed automático e versionado**: na primeira leitura de cada store (site
+  novo ou deploy preview novo), o código popula automaticamente uma base
+  semente de ~170 cores e ~90 exemplos de categoria
+  (`netlify/functions/lib/seedData.mts`), para o modelo já responder algo
+  sensato antes de qualquer uso real. A paleta semente tem uma versão
+  (`SEED_VERSION`): sempre que ela cresce/muda, um store que já existia (por
+  exemplo, o de produção, que já tinha sido semeado com uma paleta menor)
+  automaticamente ganha os exemplos novos na próxima vez que é lido —
+  comparando por identidade (r,g,b,rótulo / features,rótulo) para nunca
+  duplicar o que já está lá nem tocar em exemplos gravados por correções
+  reais do usuário (`source: 'user_feedback'`). Isso significa que dar
+  "deploy" numa paleta semente maior já é, na prática, uma forma de
+  "treinar mais" o site em produção — sem precisar reenviar nada manualmente.
 
 ## 3. O modelo de Machine Learning
 

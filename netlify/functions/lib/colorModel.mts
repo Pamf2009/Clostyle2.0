@@ -12,7 +12,7 @@
 // corrige sozinho a cada correção que o usuário faz (ver addColorExample).
 import { getBlobStore } from "./blobStore.mts";
 import { weightedKnnClassify, type ClassificationResult } from "./knn.mts";
-import { SEED_COLORS } from "./seedData.mts";
+import { SEED_COLORS, SEED_VERSION } from "./seedData.mts";
 
 export interface RgbColor {
   r: number;
@@ -53,7 +53,12 @@ export interface ColorExample extends Hsl, RgbColor {
 
 const STORE_NAME = "ml-color-examples";
 const BLOB_KEY = "examples";
+const META_KEY = "meta";
 const MAX_EXAMPLES = 4000; // limite generoso; mantém as mais recentes se estourar
+
+interface StoreMeta {
+  seedVersion: number;
+}
 
 function seedExamples(): ColorExample[] {
   return SEED_COLORS.map(([label, r, g, b]) => ({
@@ -67,17 +72,41 @@ function seedExamples(): ColorExample[] {
   }));
 }
 
+function seedIdentity(e: { r: number; g: number; b: number; label: string }): string {
+  return `${e.r},${e.g},${e.b},${e.label}`;
+}
+
+/** Carrega os exemplos de treinamento, populando a base semente na primeira
+ * leitura, e "regando" stores mais antigos com exemplos semente novos
+ * (quando SEED_VERSION sobe em seedData.mts) sem nunca tocar em exemplos
+ * gravados a partir de correções reais do usuário (source: 'user_feedback'). */
 async function loadExamples(): Promise<ColorExample[]> {
   const store = getBlobStore(STORE_NAME);
-  const existing = await store.get(BLOB_KEY, { type: "json" });
-  if (existing && Array.isArray(existing) && existing.length > 0) {
-    return existing as ColorExample[];
+  const existing = (await store.get(BLOB_KEY, { type: "json" })) as ColorExample[] | null;
+  const meta = (await store.get(META_KEY, { type: "json" })) as StoreMeta | null;
+
+  if (!existing || !Array.isArray(existing) || existing.length === 0) {
+    // Primeira vez que este store é lido (site novo / deploy preview novo):
+    // popula com a base semente para o modelo já responder algo sensato.
+    const seeded = seedExamples();
+    await store.setJSON(BLOB_KEY, seeded);
+    await store.setJSON(META_KEY, { seedVersion: SEED_VERSION });
+    return seeded;
   }
-  // Primeira vez que este store é lido (site novo / deploy preview novo):
-  // popula com a base semente para o modelo já responder algo sensato.
-  const seeded = seedExamples();
-  await store.setJSON(BLOB_KEY, seeded);
-  return seeded;
+
+  if (!meta || meta.seedVersion < SEED_VERSION) {
+    const alreadyPresent = new Set(existing.filter((e) => e.source === "seed").map(seedIdentity));
+    const newSeedEntries = seedExamples().filter((e) => !alreadyPresent.has(seedIdentity(e)));
+    if (newSeedEntries.length > 0) {
+      const merged = [...existing, ...newSeedEntries];
+      await store.setJSON(BLOB_KEY, merged);
+      await store.setJSON(META_KEY, { seedVersion: SEED_VERSION });
+      return merged;
+    }
+    await store.setJSON(META_KEY, { seedVersion: SEED_VERSION });
+  }
+
+  return existing;
 }
 
 export function hueDistance(h1: number, h2: number): number {

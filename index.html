@@ -2319,6 +2319,24 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Joinha / negativo: feedback rápido de 1 clique sobre a
+                     predição da IA neste scan — some quando a peça é
+                     manual/edição (sem scan de câmera associado). -->
+                <div id="modal-scan-feedback-widget" class="hidden items-center justify-between gap-3 p-3 bg-gray-50 dark:bg-slate-800/60 border border-gray-100 dark:border-slate-800 rounded-2xl">
+                    <p class="text-xs font-semibold text-gray-600 dark:text-gray-300 flex items-center gap-2">
+                        <i class="fa-solid fa-robot text-red-500"></i>
+                        <span id="modal-scan-feedback-question">A IA identificou essa peça corretamente?</span>
+                    </p>
+                    <div id="modal-scan-feedback-buttons" class="flex gap-2 shrink-0">
+                        <button type="button" onclick="markScanFeedback(true)" title="A IA acertou" class="w-10 h-10 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-500 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 flex items-center justify-center transition-all">
+                            <i class="fa-solid fa-thumbs-up"></i>
+                        </button>
+                        <button type="button" onclick="markScanFeedback(false)" title="A IA errou" class="w-10 h-10 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-500 hover:bg-red-500 hover:text-white hover:border-red-500 flex items-center justify-center transition-all">
+                            <i class="fa-solid fa-thumbs-down"></i>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <!-- Footer -->
@@ -3195,10 +3213,12 @@
             document.getElementById('modal-item-size').value = '';
             document.getElementById('modal-item-material').value = '';
 
-            // Esconde o painel de confiança da IA (só aparece após um scan real)
+            // Esconde o painel de confiança da IA e o joinha/negativo (só
+            // aparecem após um scan real)
             document.getElementById('modal-ai-confidence').classList.add('hidden');
             document.getElementById('modal-ai-color-alternatives').innerHTML = '';
             document.getElementById('modal-ai-category-alternatives').innerHTML = '';
+            renderScanFeedbackWidget();
 
             // Restore Preview frame placeholder
             const preview = document.getElementById('modal-photo-preview');
@@ -3221,6 +3241,7 @@
             modalImageBase64 = item.photo;
             lastScanPrediction = null; // editar peça já cadastrada não é um scan novo
             document.getElementById('modal-ai-confidence').classList.add('hidden');
+            renderScanFeedbackWidget();
 
             // Fill inputs
             document.getElementById('item-modal-title').textContent = 'Editar Peça';
@@ -3420,15 +3441,24 @@
 
             if (!pred || pred.offline) return; // nada consultado em nuvem -> nada pra reforçar/corrigir
 
+            // Se o usuário já deu 👎 nesta predição (markScanFeedback) e NÃO
+            // corrigiu o campo antes de salvar, não reforça o valor que ele
+            // mesmo marcou como errado — melhor não aprender nada agora do
+            // que aprender a coisa errada.
+            const colorUnchanged = pred.color && finalColor === pred.color.predicted;
+            const categoryUnchanged = pred.category && finalCategory === pred.category.predicted;
+            const effectiveFinalColor = pred.flaggedWrong && colorUnchanged ? null : finalColor;
+            const effectiveFinalCategory = pred.flaggedWrong && categoryUnchanged ? null : finalCategory;
+
             const payload = {
                 rgb: pred.rgb,
                 categoryFeatures: pred.categoryFeatures,
                 predictedColor: pred.color ? pred.color.predicted : null,
-                finalColor,
+                finalColor: effectiveFinalColor,
                 colorConfidence: pred.color ? pred.color.confidence : null,
                 colorNeededReview: pred.color ? pred.color.needsReview : false,
                 predictedCategory: pred.category ? pred.category.predicted : null,
-                finalCategory,
+                finalCategory: effectiveFinalCategory,
                 categoryConfidence: pred.category ? pred.category.confidence : null,
                 categoryNeededReview: pred.category ? pred.category.needsReview : false,
                 itemId
@@ -4323,6 +4353,7 @@
             }
 
             renderAiConfidencePanel();
+            renderScanFeedbackWidget();
 
             const confPct = scanPrediction && scanPrediction.color ? Math.round(scanPrediction.color.confidence * 100) : null;
             const confSuffix = confPct !== null ? ` (confiança ${confPct}%)` : '';
@@ -4508,6 +4539,73 @@
         function applyCategorySuggestion(value) {
             document.getElementById('modal-item-category').value = value;
             showToast(`✏️ Categoria ajustada para "${categoryLabelPt(value)}" — obrigado, isso ajuda a IA a aprender!`, 'info', 3000);
+        }
+
+        // ==================== JOINHA / NEGATIVO NA PREDIÇÃO DO SCAN ====================
+        // Feedback de 1 clique sobre "a IA identificou essa peça certo?" —
+        // um atalho pro mesmo aprendizado que já rola ao salvar com os
+        // campos corrigidos, só que explícito e imediato.
+
+        /** Mostra o widget só quando este item veio de um scan de câmera de
+         * verdade (não manual, não simulado, não offline). */
+        function renderScanFeedbackWidget() {
+            const widget = document.getElementById('modal-scan-feedback-widget');
+            const question = document.getElementById('modal-scan-feedback-question');
+            const buttons = document.getElementById('modal-scan-feedback-buttons');
+
+            const pred = lastScanPrediction;
+            if (!pred || pred.offline) {
+                widget.classList.add('hidden');
+                widget.classList.remove('flex');
+                return;
+            }
+
+            widget.classList.remove('hidden');
+            widget.classList.add('flex');
+            question.textContent = 'A IA identificou essa peça corretamente?';
+            buttons.classList.remove('hidden');
+        }
+
+        /** Joinha (true) ou negativo (false) na predição atual do scan. */
+        async function markScanFeedback(isCorrect) {
+            const pred = lastScanPrediction;
+            if (!pred || pred.offline) return;
+
+            const question = document.getElementById('modal-scan-feedback-question');
+            const buttons = document.getElementById('modal-scan-feedback-buttons');
+            buttons.classList.add('hidden');
+
+            if (isCorrect) {
+                question.textContent = '✅ Obrigado! Isso reforça o que a IA já aprendeu.';
+                // Reforça a predição como exemplo de treinamento agora — usa
+                // o mesmo caminho do save normal, só que com o valor previsto
+                // como "final". Isso também zera lastScanPrediction, então o
+                // save (se acontecer depois) não manda o feedback de novo.
+                await submitScanFeedbackIfNeeded(
+                    currentlyEditingItemId || null,
+                    pred.color ? pred.color.predicted : null,
+                    pred.category ? pred.category.predicted : null
+                );
+            } else {
+                question.textContent = '❌ Ok! Corrija a cor/categoria abaixo antes de salvar — isso ensina a IA.';
+                // Ainda não sabemos qual é o valor certo, então não há nada
+                // pra aprender agora. Só marca a predição como sinalizada
+                // errada, pra não reforçá-la sem querer se o usuário salvar
+                // sem mudar o campo (ver submitScanFeedbackIfNeeded).
+                pred.flaggedWrong = true;
+                highlightFieldsForCorrection();
+            }
+        }
+
+        function highlightFieldsForCorrection() {
+            const colorField = document.getElementById('modal-item-color-primary');
+            const categoryField = document.getElementById('modal-item-category');
+            [colorField, categoryField].forEach(el => {
+                if (!el) return;
+                el.classList.add('ring-2', 'ring-red-500');
+                setTimeout(() => el.classList.remove('ring-2', 'ring-red-500'), 4000);
+            });
+            if (colorField) colorField.focus({ preventScroll: true });
         }
 
         // Helper RGB matching functions

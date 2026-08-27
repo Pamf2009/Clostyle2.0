@@ -24,27 +24,72 @@
  * mudar de forma significativa — os modelos usam isso pra saber quando
  * precisam "regar" um store que já existia com os exemplos novos, sem
  * duplicar o que já está lá nem tocar em exemplos de user_feedback. */
-export const SEED_VERSION = 3;
+export const SEED_VERSION = 4;
+
+// Pedido do usuário: 1000 exemplos sintéticos por rótulo (cor) e por
+// categoria. Gerados com um PRNG determinístico (mesma seed sempre → mesmo
+// resultado, reprodutível) espalhados dentro de uma faixa BEM estreita ao
+// redor do centro de cada classe — é a mesma ideia de "lightingVariants" de
+// antes, só que com muito mais pontos e variação contínua (não só 4
+// fatores fixos) em vez de uniformemente aleatória: mais pontos no mesmo
+// cluster ajudam o k-NN a ter um vizinho próximo pra praticamente qualquer
+// leitura de câmera daquela cor/categoria, mas só ajudam de verdade se o
+// cluster continuar coeso — se a faixa fosse larga o suficiente pra invadir
+// o território de uma classe vizinha, viraria o mesmo problema do PR #4
+// (mais dados quase-duplicados == mais confusão, não menos). Por isso a
+// faixa aqui é deliberadamente mais estreita que a de antes.
+const SAMPLES_PER_LABEL = 1000;
+
+/** PRNG determinístico simples (mulberry32) — sem dependência externa, e
+ * sempre gera a mesma sequência pra mesma seed (reprodutível). */
+function mulberry32(seed: number) {
+  let a = seed;
+  return function random() {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 function clampByte(n: number): number {
   return Math.max(0, Math.min(255, Math.round(n)));
 }
 
-/** Gera variações "sob luzes diferentes" de uma cor: escala o brilho um
- * pouco pra cima/baixo mantendo matiz e saturação praticamente constantes —
- * fisicamente é o que muda mais entre fotos da mesma peça (iluminação),
- * então é o que faz sentido variar entre amostras da MESMA classe. Mantém o
- * cluster de cada rótulo bem coeso (bom pro k-NN), diferente de misturar
- * tons deliberadamente diferentes sob o mesmo nome.
+/** Gera SAMPLES_PER_LABEL variações "sob condições de câmera/luz um pouco
+ * diferentes" de uma cor: perturba brilho (mais) e matiz/saturação (bem
+ * pouco) mantendo o cluster coeso — fisicamente é o que mais varia entre
+ * fotos da mesma peça. `seed` é derivado do próprio rótulo, então cada cor
+ * tem uma sequência determinística e independente das outras.
  */
-function lightingVariants(label: string, r: number, g: number, b: number): [string, number, number, number][] {
-  const factors = [0.88, 0.96, 1.04, 1.12];
-  return factors.map((f): [string, number, number, number] => [
-    label,
-    clampByte(r * f),
-    clampByte(g * f),
-    clampByte(b * f),
-  ]);
+function denseColorVariants(label: string, r: number, g: number, b: number, seed: number): [string, number, number, number][] {
+  const rand = mulberry32(seed);
+  const out: [string, number, number, number][] = [];
+  for (let i = 0; i < SAMPLES_PER_LABEL; i++) {
+    // Brilho: até ±14% (equivalente ao intervalo dos 4 fatores manuais de
+    // antes). Cada canal ganha um pouquinho de ruído independente também
+    // (câmeras reais não escalam R/G/B de forma perfeitamente uniforme).
+    const lightFactor = 0.86 + rand() * 0.28; // 0.86 .. 1.14
+    const noise = () => (rand() - 0.5) * 6; // ±3 por canal
+    out.push([
+      label,
+      clampByte(r * lightFactor + noise()),
+      clampByte(g * lightFactor + noise()),
+      clampByte(b * lightFactor + noise()),
+    ]);
+  }
+  return out;
+}
+
+/** Hash simples de string -> inteiro, só pra derivar uma seed determinística
+ * por rótulo (não precisa ser criptográfico, só estável). */
+function seedFromLabel(label: string): number {
+  let h = 0;
+  for (let i = 0; i < label.length; i++) {
+    h = (Math.imul(h, 31) + label.charCodeAt(i)) | 0;
+  }
+  return h || 1;
 }
 
 /** Um representante por rótulo. Cada família de cor tem poucos nomes,
@@ -117,11 +162,11 @@ const COLOR_CENTERS: [string, number, number, number][] = [
   ['Prateado', 186, 186, 188],
 ];
 
-/** Paleta semente final: cada rótulo vira 4 amostras próximas entre si
- * (variação de "iluminação"), então o k-NN tem vizinhos suficientes e bem
- * coesos por classe desde o início. */
+/** Paleta semente final: cada rótulo vira SAMPLES_PER_LABEL amostras
+ * próximas entre si (variação de "iluminação"), então o k-NN tem vizinhos
+ * densos e bem coesos por classe desde o início — não só 4 como antes. */
 export const SEED_COLORS: [string, number, number, number][] = COLOR_CENTERS.flatMap(([label, r, g, b]) =>
-  lightingVariants(label, r, g, b)
+  denseColorVariants(label, r, g, b, seedFromLabel(label))
 );
 
 /** Centróides heurísticos por categoria: [rótulo, aspectRatio, saturação,
@@ -147,20 +192,32 @@ function clamp01(n: number): number {
   return Math.round(Math.min(1, Math.max(0, n)) * 1000) / 1000;
 }
 
-// Poucos pontos de jitter, bem pequenos: o objetivo é dar densidade ao
-// vizinho mais próximo (robustez a uma foto levemente atípica), não
-// espalhar tanto a ponto de invadir o território de outra categoria.
-const JITTER_STEPS = [-0.03, -0.015, 0, 0.015, 0.03];
+/** Gera SAMPLES_PER_LABEL variações de uma categoria: perturbação pequena e
+ * contínua em torno do centróide (mesma faixa de antes, só que com ruído
+ * determinístico em vez de só 5 pontos fixos), mantendo o cluster coeso. */
+function denseCategoryVariants(
+  label: string,
+  aspect: number,
+  sat: number,
+  bright: number,
+  edge: number,
+  seed: number
+): [string, number, number, number, number][] {
+  const rand = mulberry32(seed);
+  const out: [string, number, number, number, number][] = [];
+  for (let i = 0; i < SAMPLES_PER_LABEL; i++) {
+    const j = () => (rand() - 0.5) * 0.06; // ±0.03, mesma amplitude do jitter manual anterior
+    out.push([
+      label,
+      Math.round((aspect + j() * 2) * 1000) / 1000,
+      clamp01(sat + j()),
+      clamp01(bright + j()),
+      clamp01(edge + j() / 2),
+    ]);
+  }
+  return out;
+}
 
 export const SEED_CATEGORIES: [string, number, number, number, number][] = CATEGORY_CENTROIDS.flatMap(
-  ([label, aspect, sat, bright, edge]) =>
-    JITTER_STEPS.map(
-      (j): [string, number, number, number, number] => [
-        label,
-        Math.round((aspect + j * 2) * 1000) / 1000,
-        clamp01(sat + j),
-        clamp01(bright + j),
-        clamp01(edge + j / 2),
-      ]
-    )
+  ([label, aspect, sat, bright, edge]) => denseCategoryVariants(label, aspect, sat, bright, edge, seedFromLabel(label))
 );

@@ -36,7 +36,9 @@ function classify(rows: SeedRow[], rgb: RgbColor) {
     (row) => colorDistance(hsl, row),
     (row) => row.label,
     (row) => row.weight,
-    { k: 9, reviewConfidenceThreshold: 0.55, closeCallRatioThreshold: 0.82 }
+    // Mesmas opções de classifyColor() em colorModel.mts (inclusive
+    // maxNeighborDistance) — se uma mudar, a outra precisa mudar junto.
+    { k: 9, reviewConfidenceThreshold: 0.55, closeCallRatioThreshold: 0.82, maxNeighborDistance: 0.12 }
   );
 }
 

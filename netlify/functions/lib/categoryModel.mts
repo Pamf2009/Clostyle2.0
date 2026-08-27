@@ -8,7 +8,7 @@
 // um novo exemplo no banco, então a acurácia sobe com o uso real do app.
 import { getBlobStore } from "./blobStore.mts";
 import { weightedKnnClassify, type ClassificationResult } from "./knn.mts";
-import { SEED_CATEGORIES } from "./seedData.mts";
+import { SEED_CATEGORIES, SEED_VERSION } from "./seedData.mts";
 
 export interface CategoryFeatures {
   aspectRatio: number; // largura / altura do enquadramento
@@ -27,7 +27,12 @@ export interface CategoryExample extends CategoryFeatures {
 
 const STORE_NAME = "ml-category-examples";
 const BLOB_KEY = "examples";
+const META_KEY = "meta";
 const MAX_EXAMPLES = 4000;
+
+interface StoreMeta {
+  seedVersion: number;
+}
 
 function seedExamples(): CategoryExample[] {
   return SEED_CATEGORIES.map(([label, aspectRatio, avgSaturation, avgBrightness, edgeDensity]) => ({
@@ -43,15 +48,37 @@ function seedExamples(): CategoryExample[] {
   }));
 }
 
+function seedIdentity(e: CategoryFeatures & { label: string }): string {
+  return `${e.aspectRatio},${e.avgSaturation},${e.avgBrightness},${e.edgeDensity},${e.label}`;
+}
+
+/** Mesma lógica de "regar" um store antigo com exemplos semente novos que o
+ * colorModel usa — ver o comentário lá para o raciocínio completo. */
 async function loadExamples(): Promise<CategoryExample[]> {
   const store = getBlobStore(STORE_NAME);
-  const existing = await store.get(BLOB_KEY, { type: "json" });
-  if (existing && Array.isArray(existing) && existing.length > 0) {
-    return existing as CategoryExample[];
+  const existing = (await store.get(BLOB_KEY, { type: "json" })) as CategoryExample[] | null;
+  const meta = (await store.get(META_KEY, { type: "json" })) as StoreMeta | null;
+
+  if (!existing || !Array.isArray(existing) || existing.length === 0) {
+    const seeded = seedExamples();
+    await store.setJSON(BLOB_KEY, seeded);
+    await store.setJSON(META_KEY, { seedVersion: SEED_VERSION });
+    return seeded;
   }
-  const seeded = seedExamples();
-  await store.setJSON(BLOB_KEY, seeded);
-  return seeded;
+
+  if (!meta || meta.seedVersion < SEED_VERSION) {
+    const alreadyPresent = new Set(existing.filter((e) => e.source === "seed").map(seedIdentity));
+    const newSeedEntries = seedExamples().filter((e) => !alreadyPresent.has(seedIdentity(e)));
+    if (newSeedEntries.length > 0) {
+      const merged = [...existing, ...newSeedEntries];
+      await store.setJSON(BLOB_KEY, merged);
+      await store.setJSON(META_KEY, { seedVersion: SEED_VERSION });
+      return merged;
+    }
+    await store.setJSON(META_KEY, { seedVersion: SEED_VERSION });
+  }
+
+  return existing;
 }
 
 export function categoryDistance(a: CategoryFeatures, b: CategoryFeatures): number {

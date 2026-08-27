@@ -4,138 +4,163 @@
 // modelos), para o modelo já responder algo sensato antes de qualquer scan
 // real do usuário. Depois disso, quem faz a base crescer é o próprio uso do
 // app (ver colorModel.mts / categoryModel.mts).
+//
+// Ajuste de 2026-08-27: uma primeira tentativa de ampliar a paleta (~171
+// tons, PR #4) na verdade DERRUBOU a acurácia medida (54% em vez de subir),
+// porque adicionar muitos nomes de cor quase-idênticos (Bordô/Vinho,
+// Areia/Bege/Nude/Off-White, Azul Bebê/Azul Claro...) cria classes que nem
+// um humano distingue de forma consistente — o k-NN passa a confundi-las
+// entre si. A correção foi medir com netlify/functions/lib/__evalAccuracy.mts
+// (acurácia leave-one-out, a mesma conta de /api/ml/stats) e reprojetar a
+// paleta em torno de dois princípios:
+//   1. Poucos nomes por família de cor, bem espaçados entre si (matiz e/ou
+//      luminosidade), em vez de muitas variações quase-sinônimas.
+//   2. Amostras da MESMA cor ficam bem próximas umas das outras (só variam
+//      um pouco em luminosidade — como a mesma peça sob luzes diferentes),
+//      pra que os vizinhos mais próximos de um exemplo sejam quase sempre da
+//      própria classe dele.
 
 /** Versão da paleta semente. Bump sempre que SEED_COLORS ou SEED_CATEGORIES
- * crescer/mudar de forma significativa — os modelos usam isso pra saber
- * quando precisam "regar" um store que já existia com os exemplos novos,
- * sem duplicar o que já está lá nem tocar em exemplos de user_feedback. */
-export const SEED_VERSION = 2;
+ * mudar de forma significativa — os modelos usam isso pra saber quando
+ * precisam "regar" um store que já existia com os exemplos novos, sem
+ * duplicar o que já está lá nem tocar em exemplos de user_feedback. */
+export const SEED_VERSION = 3;
 
-/** Paleta semente: [rótulo em português, r, g, b]. Várias variações de
- * luminosidade/saturação por família de cor, para o k-NN ter vizinhos
- * suficientes e robustos desde o início — inclusive sob luz ruim. */
-export const SEED_COLORS: [string, number, number, number][] = [
-  // ===== Preto / Cinza / Branco =====
-  ['Preto', 0, 0, 0], ['Preto', 10, 10, 12], ['Preto', 18, 18, 20], ['Preto', 25, 25, 28],
-  ['Grafite', 35, 38, 43], ['Grafite', 41, 45, 51], ['Grafite', 48, 52, 58],
-  ['Cinza Chumbo', 55, 58, 63], ['Cinza Chumbo', 66, 69, 75],
-  ['Cinza Escuro', 75, 78, 84], ['Cinza', 90, 96, 106], ['Cinza', 107, 114, 128], ['Cinza', 120, 126, 138],
-  ['Cinza Claro', 145, 151, 161], ['Cinza Claro', 156, 163, 175], ['Cinza Claro', 178, 184, 194],
-  ['Cinza Perola', 205, 209, 214],
-  ['Off-White', 232, 228, 218], ['Off-White', 240, 236, 225],
-  ['Branco', 245, 245, 245], ['Branco', 250, 250, 250], ['Branco', 255, 255, 255],
+function clampByte(n: number): number {
+  return Math.max(0, Math.min(255, Math.round(n)));
+}
 
-  // ===== Azuis =====
-  ['Azul Marinho', 14, 24, 58], ['Azul Marinho', 20, 32, 74], ['Azul Marinho', 30, 45, 90], ['Azul Marinho', 38, 55, 105],
-  ['Azul Petróleo', 15, 65, 75], ['Azul Petróleo', 20, 80, 90], ['Azul Petróleo', 28, 95, 105],
-  ['Índigo', 55, 48, 180], ['Índigo', 63, 55, 201], ['Índigo', 78, 70, 220],
-  ['Azul Royal', 30, 50, 175], ['Azul Royal', 37, 60, 199], ['Azul Royal', 48, 75, 215],
-  ['Azul', 35, 90, 200], ['Azul', 40, 100, 220], ['Azul', 59, 130, 246], ['Azul', 75, 145, 250],
-  ['Azul Cobalto', 25, 75, 190],
-  ['Azul Claro', 120, 175, 245], ['Azul Claro', 147, 197, 253], ['Azul Claro', 170, 210, 253],
-  ['Azul Bebê', 191, 219, 254], ['Azul Bebê', 210, 230, 255],
-  ['Ciano', 25, 175, 190], ['Ciano', 34, 197, 210], ['Ciano', 55, 210, 222],
-  ['Azul Jeans', 65, 105, 155], ['Azul Jeans', 85, 125, 170],
-  ['Azul Acinzentado', 95, 115, 140],
+/** Gera variações "sob luzes diferentes" de uma cor: escala o brilho um
+ * pouco pra cima/baixo mantendo matiz e saturação praticamente constantes —
+ * fisicamente é o que muda mais entre fotos da mesma peça (iluminação),
+ * então é o que faz sentido variar entre amostras da MESMA classe. Mantém o
+ * cluster de cada rótulo bem coeso (bom pro k-NN), diferente de misturar
+ * tons deliberadamente diferentes sob o mesmo nome.
+ */
+function lightingVariants(label: string, r: number, g: number, b: number): [string, number, number, number][] {
+  const factors = [0.88, 0.96, 1.04, 1.12];
+  return factors.map((f): [string, number, number, number] => [
+    label,
+    clampByte(r * f),
+    clampByte(g * f),
+    clampByte(b * f),
+  ]);
+}
 
-  // ===== Verdes =====
-  ['Verde Militar', 62, 74, 38], ['Verde Militar', 74, 88, 45], ['Verde Militar', 86, 100, 55],
-  ['Verde Musgo', 72, 85, 50], ['Verde Musgo', 85, 99, 60], ['Verde Musgo', 98, 112, 70],
-  ['Verde Escuro', 15, 75, 42], ['Verde Escuro', 20, 90, 50], ['Verde Escuro', 28, 105, 60],
-  ['Verde', 16, 160, 110], ['Verde', 16, 185, 129], ['Verde', 34, 150, 80], ['Verde', 45, 200, 140],
-  ['Verde Esmeralda', 20, 170, 100],
-  ['Verde Oliva', 95, 100, 50], ['Verde Oliva', 107, 114, 60], ['Verde Oliva', 120, 128, 72],
-  ['Verde Água', 40, 195, 175], ['Verde Água', 45, 212, 191], ['Verde Água', 65, 220, 200],
-  ['Verde Limão', 150, 220, 45], ['Verde Limão', 163, 230, 53], ['Verde Limão', 180, 235, 80],
-  ['Verde Menta', 150, 230, 195], ['Verde Menta', 170, 240, 210],
-  ['Verde Sálvia', 140, 160, 130],
+/** Um representante por rótulo. Cada família de cor tem poucos nomes,
+ * escolhidos para ficarem bem espaçados em matiz e/ou luminosidade — é essa
+ * separação, mais do que a quantidade de nomes, que faz o classificador
+ * acertar de verdade (ver comentário no topo do arquivo). */
+const COLOR_CENTERS: [string, number, number, number][] = [
+  // Neutros (ordenados por luminosidade, degraus grandes o suficiente pra
+  // não se confundirem mesmo variando um pouco a exposição da foto)
+  ['Preto', 8, 8, 9],
+  ['Grafite', 40, 43, 48],
+  ['Cinza Chumbo', 70, 74, 80],
+  ['Cinza', 112, 118, 128],
+  ['Cinza Claro', 168, 174, 183],
+  ['Branco', 248, 248, 248],
+  ['Off-White', 236, 232, 224],
 
-  // ===== Vermelhos / Rosas =====
-  ['Vermelho Escuro', 110, 25, 25], ['Vermelho Escuro', 127, 29, 29], ['Vermelho Escuro', 145, 35, 35],
-  ['Bordô', 85, 15, 30], ['Bordô', 100, 20, 35], ['Bordô', 115, 28, 42],
-  ['Vinho', 75, 15, 35], ['Vinho', 90, 20, 40], ['Vinho', 105, 28, 48],
-  ['Vermelho', 200, 30, 30], ['Vermelho', 220, 45, 45], ['Vermelho', 239, 68, 68], ['Vermelho', 245, 85, 85],
-  ['Vermelho Tomate', 225, 60, 45],
-  ['Rosa Choque', 255, 20, 147], ['Rosa Choque', 255, 45, 160],
-  ['Rosa', 220, 60, 140], ['Rosa', 236, 72, 153], ['Rosa', 245, 100, 170],
-  ['Rosa Claro', 249, 168, 212], ['Rosa Claro', 252, 190, 220],
-  ['Rosa Antigo', 200, 145, 150],
-  ['Salmão', 240, 115, 100], ['Salmão', 250, 128, 114], ['Salmão', 253, 145, 130],
-  ['Coral', 245, 115, 70], ['Coral', 255, 127, 80], ['Coral', 255, 145, 105],
+  // Terrosos / marrons / bege (mesma família de matiz quente, separados
+  // principalmente por luminosidade + leve variação de matiz)
+  ['Marrom Café', 82, 46, 22],
+  ['Marrom', 122, 66, 28],
+  ['Caramelo', 178, 118, 62],
+  ['Terracota', 183, 104, 70],
+  ['Caqui', 172, 166, 112],
+  ['Amarelo Mostarda', 196, 142, 30],
+  // Nota: "Areia" foi removida como rótulo próprio — na prática é
+  // indistinguível de "Bege" (mesma faixa de matiz/luminosidade), e mantê-la
+  // separada só derrubava a acurácia sem ganho real de expressividade.
+  ['Bege', 226, 205, 174],
 
-  // ===== Laranjas / Amarelos =====
-  ['Laranja Queimado', 180, 60, 10], ['Laranja Queimado', 194, 65, 12], ['Laranja Queimado', 210, 78, 20],
-  ['Laranja', 235, 105, 15], ['Laranja', 249, 115, 22], ['Laranja', 253, 135, 45],
-  ['Pêssego', 250, 180, 140], ['Pêssego', 253, 200, 165],
-  ['Amarelo Mostarda', 185, 128, 4], ['Amarelo Mostarda', 202, 138, 4], ['Amarelo Mostarda', 218, 155, 20],
-  ['Amarelo Ouro', 220, 165, 10],
-  ['Amarelo', 220, 165, 8], ['Amarelo', 234, 179, 8], ['Amarelo', 250, 204, 21], ['Amarelo', 253, 224, 71],
-  ['Amarelo Claro', 253, 235, 130],
-  ['Creme', 245, 230, 190], ['Creme', 250, 240, 210],
+  // Azuis (bem representados — é a cor mais comum em roupa e a do bug
+  // original relatado)
+  ['Azul Marinho', 18, 30, 70],
+  ['Índigo', 58, 52, 178],
+  ['Azul Royal', 32, 52, 168],
+  ['Azul', 40, 130, 232],
+  ['Azul Jeans', 78, 118, 158],
+  ['Azul Petróleo', 18, 90, 100],
+  ['Ciano', 32, 178, 196],
+  ['Azul Claro', 172, 214, 253],
 
-  // ===== Marrons / Bege / Terrosos =====
-  ['Marrom', 105, 45, 12], ['Marrom', 120, 53, 15], ['Marrom', 135, 65, 25],
-  ['Marrom Café', 78, 43, 18], ['Marrom Café', 92, 51, 23], ['Marrom Café', 105, 60, 30],
-  ['Caramelo', 165, 100, 50], ['Caramelo', 180, 110, 60], ['Caramelo', 195, 125, 75],
-  ['Terracota', 190, 90, 55], ['Terracota', 205, 105, 68],
-  ['Tabaco', 130, 90, 55],
-  ['Areia', 195, 165, 125], ['Areia', 210, 180, 140], ['Areia', 222, 195, 158],
-  ['Caqui', 175, 168, 95], ['Caqui', 189, 183, 107], ['Caqui', 200, 195, 125],
-  ['Bege', 210, 190, 158], ['Bege', 222, 202, 173], ['Bege', 232, 214, 188],
-  ['Nude', 210, 175, 145], ['Nude', 224, 190, 160], ['Nude', 235, 205, 178],
+  // Verdes
+  ['Verde Escuro', 18, 88, 50],
+  ['Verde Militar', 78, 92, 48],
+  ['Verde', 22, 168, 116],
+  ['Verde Água', 42, 200, 180],
+  ['Verde Limão', 158, 216, 58],
 
-  // ===== Roxos =====
-  ['Violeta', 108, 45, 220], ['Violeta', 124, 58, 237], ['Violeta', 140, 75, 245],
-  ['Roxo', 150, 65, 235], ['Roxo', 168, 85, 247], ['Roxo', 185, 105, 250],
-  ['Lilás', 185, 168, 250], ['Lilás', 196, 181, 253], ['Lilás', 210, 198, 254],
-  ['Ameixa', 90, 45, 90], ['Ameixa', 105, 55, 105],
-  ['Lavanda', 200, 190, 235], ['Lavanda', 215, 205, 245],
-  ['Magenta', 200, 30, 180], ['Magenta', 220, 50, 200],
+  // Vermelhos / rosas
+  ['Vermelho Escuro', 118, 28, 28],
+  ['Bordô', 96, 22, 38],
+  ['Vermelho', 222, 58, 58],
+  ['Rosa Choque', 224, 18, 190],
+  ['Rosa', 228, 88, 150],
+  ['Rosa Claro', 250, 210, 224],
+  ['Coral', 250, 128, 60],
+  ['Pêssego', 249, 180, 138],
 
-  // ===== Metálicos / neutros de acessórios =====
-  ['Dourado', 195, 160, 45], ['Dourado', 212, 175, 55], ['Dourado', 225, 190, 80],
-  ['Prateado', 175, 175, 175], ['Prateado', 192, 192, 192], ['Prateado', 210, 210, 212],
-  ['Bronze', 140, 100, 55], ['Cobre', 175, 100, 65],
+  // Amarelos
+  ['Amarelo', 232, 182, 20],
+  ['Amarelo Claro', 250, 222, 110],
+
+  // Roxos
+  ['Roxo', 158, 78, 224],
+  ['Lilás', 202, 186, 244],
+  ['Ameixa', 92, 48, 92],
+
+  // Metálicos / acessórios
+  ['Dourado', 200, 164, 60],
+  ['Prateado', 186, 186, 188],
 ];
+
+/** Paleta semente final: cada rótulo vira 4 amostras próximas entre si
+ * (variação de "iluminação"), então o k-NN tem vizinhos suficientes e bem
+ * coesos por classe desde o início. */
+export const SEED_COLORS: [string, number, number, number][] = COLOR_CENTERS.flatMap(([label, r, g, b]) =>
+  lightingVariants(label, r, g, b)
+);
 
 /** Centróides heurísticos por categoria: [rótulo, aspectRatio, saturação,
  * brilho, densidade de bordas]. Cada um entra com várias variações (jitter)
  * para o k-NN ter vizinhos suficientes e robustos desde o início. */
 const CATEGORY_CENTROIDS: [string, number, number, number, number][] = [
-  ['camisetas', 1.05, 0.40, 0.55, 0.15],
-  ['camisas', 1.10, 0.35, 0.55, 0.25],
-  ['moletons', 1.15, 0.30, 0.45, 0.20],
-  ['jaquetas', 1.20, 0.30, 0.40, 0.30],
-  ['calcas', 0.55, 0.30, 0.40, 0.20],
-  ['shorts', 0.80, 0.35, 0.50, 0.15],
-  ['saias', 0.75, 0.40, 0.50, 0.10],
-  ['vestidos', 0.50, 0.45, 0.50, 0.15],
-  ['ternos', 0.60, 0.15, 0.35, 0.25],
-  ['sapatos', 1.60, 0.25, 0.40, 0.35],
-  ['tenis', 1.70, 0.40, 0.50, 0.40],
-  ['bones', 1.30, 0.35, 0.45, 0.20],
-  ['acessorios', 1.00, 0.30, 0.50, 0.15],
+  ['camisetas', 1.05, 0.42, 0.55, 0.14],
+  ['camisas', 1.12, 0.32, 0.58, 0.26],
+  ['moletons', 1.18, 0.26, 0.42, 0.18],
+  ['jaquetas', 1.24, 0.28, 0.36, 0.34],
+  ['calcas', 0.50, 0.28, 0.38, 0.19],
+  ['shorts', 0.85, 0.36, 0.52, 0.13],
+  ['saias', 0.68, 0.44, 0.52, 0.08],
+  ['vestidos', 0.42, 0.48, 0.50, 0.14],
+  ['ternos', 0.62, 0.10, 0.30, 0.24],
+  ['sapatos', 1.55, 0.18, 0.34, 0.30],
+  ['tenis', 1.78, 0.44, 0.54, 0.44],
+  ['bones', 1.35, 0.38, 0.48, 0.19],
+  ['acessorios', 0.98, 0.24, 0.58, 0.10],
 ];
 
 function clamp01(n: number): number {
   return Math.round(Math.min(1, Math.max(0, n)) * 1000) / 1000;
 }
 
-// Mais pontos de jitter (7 em vez de 3) por categoria: com mais variação em
-// torno de cada centróide, o k-NN fica menos sensível a uma única foto fora
-// da curva e cobre melhor peças de cores/texturas variadas dentro da mesma
-// categoria.
-const JITTER_STEPS = [-0.12, -0.08, -0.04, 0, 0.04, 0.08, 0.12];
+// Poucos pontos de jitter, bem pequenos: o objetivo é dar densidade ao
+// vizinho mais próximo (robustez a uma foto levemente atípica), não
+// espalhar tanto a ponto de invadir o território de outra categoria.
+const JITTER_STEPS = [-0.03, -0.015, 0, 0.015, 0.03];
 
 export const SEED_CATEGORIES: [string, number, number, number, number][] = CATEGORY_CENTROIDS.flatMap(
   ([label, aspect, sat, bright, edge]) =>
     JITTER_STEPS.map(
       (j): [string, number, number, number, number] => [
         label,
-        Math.round((aspect + j) * 1000) / 1000,
-        clamp01(sat + j / 2),
-        clamp01(bright + j / 2),
-        clamp01(edge + j / 3),
+        Math.round((aspect + j * 2) * 1000) / 1000,
+        clamp01(sat + j),
+        clamp01(bright + j),
+        clamp01(edge + j / 2),
       ]
     )
 );

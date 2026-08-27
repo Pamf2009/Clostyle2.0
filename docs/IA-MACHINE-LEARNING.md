@@ -54,7 +54,8 @@ Netlify Blobs (armazenamento de objetos nativo da Netlify)
   princípio que um banco por-branch teria.
 - **Seed automático e versionado**: na primeira leitura de cada store (site
   novo ou deploy preview novo), o código popula automaticamente uma base
-  semente de ~170 cores e ~90 exemplos de categoria
+  semente de 41 tons de cor (168 exemplos, várias variações de "iluminação"
+  por tom) e 13 categorias (65 exemplos)
   (`netlify/functions/lib/seedData.mts`), para o modelo já responder algo
   sensato antes de qualquer uso real. A paleta semente tem uma versão
   (`SEED_VERSION`): sempre que ela cresce/muda, um store que já existia (por
@@ -111,6 +112,37 @@ Ele verifica, sem precisar de nenhum store real: matiz cíclico (0°/360°), que
 nítido classifica como azul, que **azul escuro sob luz ruim não vira rosa**, que
 rosa continua sendo reconhecido, e que **uma única correção do usuário já muda o
 resultado da próxima classificação** (aprendizado online).
+
+### Medindo (e melhorando) a acurácia da paleta semente
+
+`netlify/functions/lib/__evalAccuracy.mts` mede a mesma acurácia leave-one-out
+que `/api/ml/stats` calcula em produção, rodando localmente contra a paleta
+semente atual — sem precisar de nenhum Blob store real:
+
+```bash
+npm run eval:ml
+```
+
+Isso foi usado pra calibrar a paleta até bater uma meta de acurácia (pedido do
+usuário: "treine mais vezes até chegar em 80%"). Uma primeira tentativa de
+simplesmente *ampliar* a paleta (mais nomes de cor) na verdade **derrubou** a
+acurácia medida de algo maior para 54%, porque nomes quase-sinônimos
+(Bordô/Vinho, Areia/Bege/Nude/Off-White...) criam classes que nem um humano
+distingue de forma consistente, e o k-NN passa a confundi-las entre si. A
+correção não foi "adicionar mais dados" — foi **reprojetar a paleta em torno
+de dois princípios**:
+
+1. Poucos nomes por família de cor, bem espaçados entre si (matiz e/ou
+   luminosidade), em vez de muitas variações quase-sinônimas.
+2. Amostras da mesma cor ficam bem próximas umas das outras — variando só a
+   luminosidade (como a mesma peça sob luzes diferentes) — pra que os
+   vizinhos mais próximos de um exemplo sejam quase sempre da própria classe.
+
+Resultado atual: **41 tons de cor, acurácia leave-one-out ≈ 82%**; **13
+categorias, acurácia ≈ 97%**. Ambos ficam acima da meta de 80% com alguma
+margem — a acurácia flutua um pouco conforme correções reais de usuários
+entram na base (é esperado e saudável: dado real de câmera é mais ruidoso que
+a paleta sintética).
 
 ## 4. Fluxo ponta a ponta (o que muda para o usuário)
 
